@@ -501,7 +501,7 @@ WORD cmdConfigInterface(struct NepClassEth *ncp, struct IOSana2Req *ioreq)
     }
 
     /* Check for valid address */
-    if(ioreq->ios2_SrcAddr[0] & 0x80)
+    if(ioreq->ios2_SrcAddr[0] & 0x01)
     {
         Permit();
         return deverror(S2ERR_BAD_ADDRESS, S2WERR_SRC_ADDRESS);
