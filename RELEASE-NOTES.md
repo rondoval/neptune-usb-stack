@@ -123,6 +123,11 @@ interface once in the MIDI Ports editor.
 * Possible crash when a class driver was unloaded while still in use.
 * Better recovery from errors on UAS disks.
 * Possible crash on disk change with several partitions.
+* **Standard USB network devices** (cdceth, CDC ECM/NCM) now pass traffic, including
+  multicast; NCM no longer drops packets under load.
+* **USB network adapters** (asixeth, davicometh, ethwrap, lan78xx, moschipeth, pegasuseth,
+  rndis): fixed packet corruption or crashes, refused station addresses, and a send that
+  could hang the program.
 
 # Release notes - Neptune 6.2 (released as Poseidon for AmigaOS 6.2)
 

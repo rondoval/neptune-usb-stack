@@ -24,7 +24,7 @@ static BOOL cdceth_set_packet_filter(struct NepClassEth *ncp, UWORD filter);
 static void cdceth_complete_write(struct NepClassEth *ncp, LONG ioerr, ULONG actual);
 
 /* /// "Lib Stuff" */
-static const STRPTR libname = CLASS_NAME;
+const STRPTR libname = CLASS_NAME;
 
 static
 const APTR DevFuncTable[] =
@@ -807,6 +807,53 @@ void nEthTask()
 }
 /* \\\ */
 
+/* /// "cdceth_start_function()" */
+/* Switches the device to the chosen configuration, configures the
+   encapsulation, allocates the transfer buffers and selects the data
+   interface's operating alternate. Needs ncp_EP0Pipe. */
+static BOOL cdceth_start_function(struct NepClassEth *ncp, struct PsdConfig *cur_cfg)
+{
+    if(ncp->ncp_Config != cur_cfg)
+    {
+        IPTR cfgnum = 0;
+
+        psdGetAttrs(PGA_CONFIG, ncp->ncp_Config,
+                    CA_ConfigNum, &cfgnum,
+                    TAG_END);
+        KPRINTF(5, ("Switching device to configuration %ld\n", (LONG) cfgnum));
+        if(!psdSetDeviceConfig(ncp->ncp_EP0Pipe, cfgnum))
+        {
+            psdAddErrorMsg(RETURN_FAIL, (STRPTR) libname,
+                           "Could not switch to configuration %ld!", (LONG) cfgnum);
+            return(FALSE);
+        }
+    }
+
+    if(!cdceth_encap_configure(ncp))
+    {
+        return(FALSE);
+    }
+
+    ULONG bufsize = max(ncp->ncp_ReadBufSize, ncp->ncp_WriteBufSize);
+    if(!(ncp->ncp_ReadBuffer[0] = AllocVec(bufsize * 4, MEMF_PUBLIC|MEMF_CLEAR)))
+    {
+        KPRINTF(1, ("Out of memory for read buffer\n"));
+        return(FALSE);
+    }
+    ncp->ncp_ReadBuffer[1] = ncp->ncp_ReadBuffer[0] + bufsize;
+    ncp->ncp_WriteBuffer[0] = ncp->ncp_ReadBuffer[1] + bufsize;
+    ncp->ncp_WriteBuffer[1] = ncp->ncp_WriteBuffer[0] + bufsize;
+
+    if(!psdSetAltInterface(ncp->ncp_EP0Pipe, ncp->ncp_Interface))
+    {
+        psdAddErrorMsg(RETURN_FAIL, (STRPTR) libname,
+                       "Could not select data interface alternate setting!");
+        return(FALSE);
+    }
+    return(TRUE);
+}
+/* \\\ */
+
 /* /// "nAllocEth()" */
 struct NepClassEth * nAllocEth(void)
 {
@@ -827,7 +874,7 @@ struct NepClassEth * nAllocEth(void)
     {
         struct PsdInterface *best_if = NULL;
         struct PsdInterface *ctrl_if = NULL;
-        struct PsdConfig *best_cfg = NULL;
+        struct PsdConfig *pc;
         struct PsdConfig *cur_cfg = NULL;
         struct List *cfgs = NULL;
         IPTR ifcls = 0, ifsub = 0, ifproto = 0;
@@ -842,9 +889,9 @@ struct NepClassEth * nAllocEth(void)
                     DA_Config, &cur_cfg,
                     TAG_END);
 
-        for(best_cfg = (struct PsdConfig *) (cfgs ? cfgs->lh_Head : NULL);
-            best_cfg && best_cfg->pc_Node.ln_Succ;
-            best_cfg = (struct PsdConfig *) best_cfg->pc_Node.ln_Succ)
+        for(pc = (struct PsdConfig *) (cfgs ? cfgs->lh_Head : NULL);
+            pc && pc->pc_Node.ln_Succ;
+            pc = (struct PsdConfig *) pc->pc_Node.ln_Succ)
         {
             struct List *ifs = NULL;
             struct PsdInterface *pif;
@@ -853,7 +900,7 @@ struct NepClassEth * nAllocEth(void)
             dataifnum = -1;
             have_dataifnum = FALSE;
 
-            psdGetAttrs(PGA_CONFIG, best_cfg,
+            psdGetAttrs(PGA_CONFIG, pc,
                         CA_InterfaceList, &ifs,
                         TAG_END);
 
@@ -954,7 +1001,7 @@ struct NepClassEth * nAllocEth(void)
                     if(in && out)
                     {
                         best_if = pif;
-                        ncp->ncp_Config = best_cfg;
+                        ncp->ncp_Config = pc;
                         ncp->ncp_EPIn = in;
                         ncp->ncp_EPOut = out;
                         ncp->ncp_Interface = pif;
@@ -994,7 +1041,7 @@ struct NepClassEth * nAllocEth(void)
                     if(in && out)
                     {
                         best_if = altpif;
-                        ncp->ncp_Config = best_cfg;
+                        ncp->ncp_Config = pc;
                         ncp->ncp_EPIn = in;
                         ncp->ncp_EPOut = out;
                         ncp->ncp_Interface = altpif;
@@ -1012,46 +1059,23 @@ struct NepClassEth * nAllocEth(void)
                 break;
         }
 
-        if(best_if)
-        {
-            KPRINTF(5, ("Selected CDC interface 0x%08lx in config 0x%08lx (alt %ld) class/sub/proto %ld/%ld/%ld\n",
-                        (void *) best_if, (void *) best_cfg, altifnum, ifcls, ifsub, ifproto));
-            ncp->ncp_ControlInterface = ctrl_if;
-            if(best_cfg && (cur_cfg != best_cfg))
-            {
-                KPRINTF(5, ("Switching device to configuration 0x%08lx\n", (void *) best_cfg));
-                psdSetAttrs(PGA_DEVICE, ncp->ncp_Device,
-                            DA_Config, best_cfg,
-                            TAG_END);
-            }
-        }
-
-        if(!(ncp->ncp_Interface && ncp->ncp_EPIn && ncp->ncp_EPOut))
+        if(!best_if)
         {
             psdAddErrorMsg(RETURN_FAIL, (STRPTR) libname, "No CDC Ethernet data interface with bulk endpoints!");
             break;
         }
+        KPRINTF(5, ("Selected CDC interface 0x%08lx in config 0x%08lx (alt %ld) class/sub/proto %ld/%ld/%ld\n",
+                    (void *) best_if, (void *) ncp->ncp_Config, altifnum, ifcls, ifsub, ifproto));
+        ncp->ncp_ControlInterface = ctrl_if;
 
         psdGetAttrs(PGA_ENDPOINT, ncp->ncp_EPOut,
                     EA_MaxPktSize, &ncp->ncp_EPOutMaxPktSize,
                     TAG_END);
 
         KPRINTF(5, ("Max packet size %ld\n", ncp->ncp_EPOutMaxPktSize));
-        cdceth_encap_configure(ncp);
 
         ncp->ncp_ReadPending = NULL;
         ncp->ncp_WritePending = NULL;
-        {
-            ULONG bufsize = max(ncp->ncp_ReadBufSize, ncp->ncp_WriteBufSize);
-            if(!(ncp->ncp_ReadBuffer[0] = AllocVec(bufsize * 4, MEMF_PUBLIC|MEMF_CLEAR)))
-            {
-                KPRINTF(1, ("Out of memory for read buffer\n"));
-                break;
-            }
-            ncp->ncp_ReadBuffer[1] = ncp->ncp_ReadBuffer[0] + bufsize;
-            ncp->ncp_WriteBuffer[0] = ncp->ncp_ReadBuffer[1] + bufsize;
-            ncp->ncp_WriteBuffer[1] = ncp->ncp_WriteBuffer[0] + bufsize;
-        }
         ncp->ncp_Unit.unit_MsgPort.mp_SigBit = AllocSignal(-1);
         ncp->ncp_Unit.unit_MsgPort.mp_SigTask = thistask;
         ncp->ncp_Unit.unit_MsgPort.mp_Node.ln_Type = NT_MSGPORT;
@@ -1061,12 +1085,8 @@ struct NepClassEth * nAllocEth(void)
         {
             if((ncp->ncp_EP0Pipe = psdAllocPipe(ncp->ncp_Device, ncp->ncp_TaskMsgPort, NULL)))
             {
-                if(!psdSetAltInterface(ncp->ncp_EP0Pipe, ncp->ncp_Interface))
-                {
-                    psdAddErrorMsg(RETURN_FAIL, (STRPTR) libname,
-                                   "Could not select data interface alternate setting!");
-                }
-                else if((ncp->ncp_EPOutPipe = psdAllocPipe(ncp->ncp_Device, ncp->ncp_TaskMsgPort, ncp->ncp_EPOut)))
+                if(cdceth_start_function(ncp, cur_cfg) &&
+                   (ncp->ncp_EPOutPipe = psdAllocPipe(ncp->ncp_Device, ncp->ncp_TaskMsgPort, ncp->ncp_EPOut)))
                 {
                     /* Allow continuous retries without aborting on NAK timeouts. */
                     psdSetAttrs(PGA_PIPE, ncp->ncp_EPOutPipe,
@@ -1317,6 +1337,9 @@ static void cdceth_log_pipe_attrs(struct PsdPipe *pipe, BOOL allow_short, BOOL n
 }
 /* \\\ */
 
+/* The device's own multicast list (SET_ETHERNET_MULTICAST_FILTERS) is never
+   loaded: any wanted multicast address asks for all multicast, and the stack
+   filters what arrives (ECM 1.2 6.2.4). */
 static UWORD cdceth_build_packet_filter(struct NepClassEth *ncp)
 {
     UWORD filter = USB_CDC_PACKET_TYPE_DIRECTED | USB_CDC_PACKET_TYPE_BROADCAST;
@@ -1324,47 +1347,45 @@ static UWORD cdceth_build_packet_filter(struct NepClassEth *ncp)
     if(ncp->ncp_OpenFlags & SANA2OPF_PROM)
     {
         filter |= USB_CDC_PACKET_TYPE_PROMISCUOUS | USB_CDC_PACKET_TYPE_ALLMULTI;
-        filter |= USB_CDC_PACKET_TYPE_MULTICAST;
     } else if(ncp->ncp_Multicasts.lh_Head->ln_Succ) {
-        filter |= USB_CDC_PACKET_TYPE_MULTICAST;
+        filter |= USB_CDC_PACKET_TYPE_ALLMULTI;
     }
 
     return(filter);
 }
 /* \\\ */
 
-static BOOL cdceth_set_packet_filter(struct NepClassEth *ncp, UWORD filter)
+/* /// "nCDCRequest()" */
+/* Sends a class request to the CDC control interface on EP0 and returns the
+   pipe error. dir is URTF_IN or URTF_OUT. */
+LONG nCDCRequest(struct NepClassEth *ncp, UBYTE dir, UBYTE request, UWORD value, APTR data, ULONG len)
 {
     IPTR ifnum = 0;
-    LONG ioerr;
-
-    if(!(ncp->ncp_EP0Pipe && ncp->ncp_ControlInterface))
-    {
-        KPRINTF(5, ("No CDC control interface for packet filter setup, skipping.\n"));
-        return(FALSE);
-    }
 
     psdGetAttrs(PGA_INTERFACE, ncp->ncp_ControlInterface,
                 IFA_InterfaceNum, &ifnum,
                 TAG_END);
 
-    KPRINTF(5, ("SET_ETHERNET_PACKET_FILTER bmReqType=0x%02lx bReq=0x%02lx wValue=0x%04lx wIndex=%ld len=0\n",
-                (ULONG) (URTF_CLASS|URTF_INTERFACE), (ULONG) UCDC_SET_ETHERNET_PACKET_FILTER,
-                (ULONG) filter, (long) ifnum));
+    /* psdPipeSetup(pipe, bmRequestType, bRequest, wValue, wIndex) */
+    psdPipeSetup(ncp->ncp_EP0Pipe, dir|URTF_CLASS|URTF_INTERFACE,
+                 request, value, ifnum);
+    return psdDoPipe(ncp->ncp_EP0Pipe, data, len);
+}
+/* \\\ */
 
-    /*
-     * psdPipeSetup() maps its fourth argument to wValue and fifth to wIndex.
-     * The CDC request expects the filter bitmap in wValue and the control
-     * interface number in wIndex, so pass them in that order even though the
-     * neptune.library call signature can be confusing.
-     */
-    psdPipeSetup(ncp->ncp_EP0Pipe,
-                 URTF_CLASS|URTF_INTERFACE,
-                 UCDC_SET_ETHERNET_PACKET_FILTER,
-                 (ULONG) filter,
-                 (ULONG) ifnum);
+static BOOL cdceth_set_packet_filter(struct NepClassEth *ncp, UWORD filter)
+{
+    LONG ioerr;
 
-    ioerr = psdDoPipe(ncp->ncp_EP0Pipe, NULL, 0);
+    if(!(ncp->ncp_EP0Pipe && ncp->ncp_ControlInterface && ncp->ncp_FilterSupported))
+    {
+        KPRINTF(5, ("No packet filter on this function, skipping.\n"));
+        return(FALSE);
+    }
+
+    KPRINTF(5, ("SET_ETHERNET_PACKET_FILTER wValue=0x%04lx\n", (ULONG) filter));
+
+    ioerr = nCDCRequest(ncp, URTF_OUT, UCDC_SET_ETHERNET_PACKET_FILTER, filter, NULL, 0);
     if(ioerr)
     {
         psdAddErrorMsg(RETURN_WARN, (STRPTR) libname,
@@ -1373,12 +1394,10 @@ static BOOL cdceth_set_packet_filter(struct NepClassEth *ncp, UWORD filter)
 
         /* (an EP0 protocol stall clears itself on the next SETUP - no
            CLEAR_FEATURE needed or meaningful for the default pipe) */
-        ncp->ncp_FilterTried = TRUE;
         return(FALSE);
     }
 
-    KPRINTF(5, ("Packet filter configured for control iface %ld\n", (long) ifnum));
-    ncp->ncp_FilterTried = TRUE;
+    KPRINTF(5, ("Packet filter configured\n"));
     return(TRUE);
 }
 /* \\\ */

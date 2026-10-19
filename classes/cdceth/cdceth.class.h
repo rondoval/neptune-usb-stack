@@ -242,7 +242,7 @@ struct NepClassEth
     struct PsdConfig   *ncp_Config;       /* Up linkage */
     struct PsdInterface *ncp_Interface;   /* Up linkage */
     struct PsdInterface *ncp_ControlInterface; /* CDC control interface */
-    BOOL                ncp_FilterTried;  /* Packet filter request attempted */
+    BOOL                ncp_FilterSupported; /* SET_ETHERNET_PACKET_FILTER accepted */
     struct Task        *ncp_ReadySigTask; /* Task to send ready signal to */
     LONG                ncp_ReadySignal;  /* Signal to send when ready */
     struct Task        *ncp_Task;         /* Subtask */
@@ -283,8 +283,9 @@ struct NepClassEth
     UBYTE               ncp_Pad0;
     ULONG               ncp_ReadBufSize;  /* Size of each read buffer */
     ULONG               ncp_WriteBufSize; /* Size of each write buffer */
-    ULONG               ncp_NtbMaxSize;   /* Max NCM NTB size */
-    UWORD               ncp_NcmMaxSegment; /* Max NCM segment size */
+    UWORD               ncp_NcmNdpAlign;  /* NCM OUT NDP alignment */
+    UWORD               ncp_NcmDivisor;   /* NCM OUT payload alignment modulus */
+    UWORD               ncp_NcmRemainder; /* NCM OUT payload alignment remainder */
     UWORD               ncp_NcmSeq;       /* NCM sequence number */
 
     struct Sana2DeviceStats ncp_DeviceStats; /* SANA Stats */
@@ -349,6 +350,7 @@ struct NepClassEth * nAllocEth(void);
 void nFreeEth(struct NepClassEth *ncp);
 
 BOOL nInitCDC(struct NepClassEth *ncp);
+LONG nCDCRequest(struct NepClassEth *ncp, UBYTE dir, UBYTE request, UWORD value, APTR data, ULONG len);
 void nSetOnline(struct NepClassEth *ncp);
 void nUpdateRXMode(struct NepClassEth *ncp);
 
