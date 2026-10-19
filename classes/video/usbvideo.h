@@ -164,6 +164,7 @@ struct NepVideoBase
 
     struct NepVideoDevBase *nh_DevBase;   /* base of device created */
     struct List         nh_Units;         /* List of units (struct NepVideoStream) */
+    struct List         nh_Bindings;      /* Bindings whose subtask runs (struct NepClassVideo) */
 };
 
 struct NepVideoDevBase
@@ -190,6 +191,7 @@ struct UvcStatus
 /* One bound VideoControl interface = one video function */
 struct NepClassVideo
 {
+    struct Node         ncv_Node;         /* In nh_Bindings while ncv_Task is set */
     struct NepVideoBase *ncv_ClsBase;     /* Up linkage */
     struct Library     *ncv_Base;         /* neptune.library base */
     struct PsdDevice   *ncv_Device;       /* Up linkage */
