@@ -2041,8 +2041,10 @@ struct NepClassMS * nAllocMS(void)
         {
             psdAddErrorMsg(RETURN_FAIL, (STRPTR) libname, "INT endpoint missing!");
             break;
-        } else if(ncm->ncm_EPOut) {
-            psdGetAttrs(PGA_ENDPOINT, ncm->ncm_EPOut,
+        }
+        if(ncm->ncm_EPInt)
+        {
+            psdGetAttrs(PGA_ENDPOINT, ncm->ncm_EPInt,
                         EA_EndpointNum, &epnum,
                         TAG_END);
             ncm->ncm_EPIntNum = epnum;

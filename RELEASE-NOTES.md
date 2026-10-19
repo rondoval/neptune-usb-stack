@@ -122,6 +122,8 @@ interface once in the MIDI Ports editor.
 * A hub could stop seeing new devices after one was unplugged, until a reboot.
 * Possible crash when a class driver was unloaded while still in use.
 * Better recovery from errors on UAS disks.
+* **USB floppy drives and other CBI devices** no longer stop responding after a failed
+  command.
 * Possible crash on disk change with several partitions.
 * **Standard USB network devices** (cdceth, CDC ECM/NCM) now pass traffic, including
   multicast; NCM no longer drops packets under load.
