@@ -4436,6 +4436,13 @@ struct PsdDevice * (psdEnumerateDevice)(struct PsdPipe * pp asm("a1"), struct Ps
     pAllocDescriptor(pd, (UBYTE *) &usdd);
     pd->pd_Flags |= PDFF_HASDEVDESC;
     pd->pd_USBVers = AROS_LE2WORD(usdd.bcdUSB);
+    /* A root hub's speed is its controller's: a USB 2.0 root hub is high
+       speed (hub.class enforces split transactions below it), a full-speed
+       controller's stays full speed. The SuperSpeed root hub is flagged
+       before enumeration (psdEnumerateHardware). */
+    if(!pd->pd_Hub && (pd->pd_USBVers >= 0x200) && !(pd->pd_Flags & PDFF_SUPERSPEED)) {
+        pd->pd_Flags |= PDFF_HIGHSPEED;
+    }
     pd->pd_DevClass = usdd.bDeviceClass;
     pd->pd_DevSubClass = usdd.bDeviceSubClass;
     pd->pd_DevProto = usdd.bDeviceProtocol;
@@ -5482,7 +5489,11 @@ struct PsdDevice * (psdEnumerateHardware)(struct PsdHardware * phw asm("a0"), st
             return phw->phw_RootDevice;
         }
 
-        pd->pd_Flags |= PDFF_CONNECTED | PDFF_HIGHSPEED;
+        /* No speed flag: the root hub is the driver's emulation, not a device
+           on a link. It is enumerated as full speed - its own bMaxPacketSize0
+           is taken - and promoted to high speed by its bcdUSB
+           (psdEnumerateDevice). A full-speed controller's stays full speed. */
+        pd->pd_Flags |= PDFF_CONNECTED;
         pp->pp_IOReq.iouh_Req.io_Command = UHCMD_CONTROLXFER;
 
         KPRINTF(1, ("Enumerating normal RootHub...\n"));

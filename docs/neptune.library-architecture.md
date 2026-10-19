@@ -265,8 +265,12 @@ has allocated, placed (parent, port, speed) and reset, or in `psdEnumerateHardwa
 
 1. the backend addresses the device and reads the first eight descriptor bytes;
 2. the EP0 max packet size is checked against the **link speed**, not `bcdUSB` (low, high and super
-   speed each allow one value; only full speed has a choice), and pushed to the backend;
-3. the full device descriptor; BOS facts (LPM, BESL, U1/U2 exit latencies, container id) when
+   speed each allow one value; only full speed has a choice), and pushed to the backend. A normal
+   root hub has no link: it starts as full speed, so its own value is taken;
+3. the full device descriptor, after which a normal root hub with `bcdUSB` 2.00 or above becomes
+   high speed (hub.class marks full- and low-speed devices below it for split transactions); a
+   full-speed controller's stays full speed, and the SuperSpeed root hub is flagged before
+   enumeration. Then BOS facts (LPM, BESL, U1/U2 exit latencies, container id) when
    `bcdUSB` is above 2.00; the strings, the clone count and `pd_IDString`;
 4. the per-device settings: custom name, popup and power overrides;
 5. every configuration descriptor parsed into the tree;

@@ -125,6 +125,8 @@ interface once in the MIDI Ports editor.
 * **USB floppy drives and other CBI devices** no longer stop responding after a failed
   command.
 * Possible crash on disk change with several partitions.
+* **Full-speed host controllers** (such as the Subway clockport card) work again; since 6.1
+  their root hub failed to enumerate.
 * **Standard USB network devices** (cdceth, CDC ECM/NCM) now pass traffic, including
   multicast; NCM no longer drops packets under load.
 * **USB network adapters** (asixeth, davicometh, ethwrap, lan78xx, moschipeth, pegasuseth,
