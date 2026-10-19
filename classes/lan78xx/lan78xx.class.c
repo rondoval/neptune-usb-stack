@@ -58,12 +58,6 @@ static LONG lan78xx_dataport_write(struct NepClassEth *ncp, ULONG sel, ULONG add
 static ULONG lan78xx_ether_crc32_be(const UBYTE *buf, int len);
 static void lan78xx_link_poll(struct NepClassEth *ncp);
 
-static inline void *callcopy(APTR routine, APTR to, APTR from, ULONG len)
-{
-    void *(*call)(APTR, APTR, ULONG) = (void *(*)(APTR, APTR, ULONG))routine;
-    return (*call)(to, from, len);
-}
-
 #define callfilter CallHookPkt
 
 int libInit(struct NepEthBase * nh)
@@ -1110,7 +1104,7 @@ BOOL nWritePacket(struct NepClassEth *ncp, struct IOSana2Req *ioreq)
         copydest += sizeof(struct EtherPacketHeader);
     }
 
-    if (callcopy(bufman->bm_CopyFromBuf, copydest, ioreq->ios2_Data, writelen) == NULL) {
+    if (!nCallS2Copy(bufman->bm_CopyFromBuf, copydest, ioreq->ios2_Data, writelen)) {
         nDoEvent(ncp, S2EVENT_ERROR | S2EVENT_TX | S2EVENT_BUFF);
         ioreq->ios2_DataLength = 0;
         ioreq->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
@@ -1170,7 +1164,7 @@ static UWORD nReadIOReq(struct NepClassEth *ncp, struct EtherPacketHeader *eph, 
             ioreq->ios2_Req.io_Flags |= SANA2IOF_MCAST;
     }
 
-    if (callcopy(bufman->bm_CopyToBuf, ioreq->ios2_Data, copyfrom, ioreq->ios2_DataLength)) {
+    if (nCallS2Copy(bufman->bm_CopyToBuf, ioreq->ios2_Data, copyfrom, ioreq->ios2_DataLength)) {
         flags &= ~DROPPED;
     } else {
         nDoEvent(ncp, S2EVENT_ERROR | S2EVENT_RX | S2EVENT_BUFF);
@@ -1668,8 +1662,7 @@ static void lan78xx_set_macaddr(struct NepClassEth *ncp)
  *
  *   1. wait for PMT_CTL.READY on the LAN7500 family
  *   2. assert a lite soft-reset via HW_CFG.LRST, wait for self-clear
- *   3. program the BIR (bulk-in-respond-with-NAK) bit - on LAN7800
- *      that moved from HW_CFG to USB_CFG0
+ *   3. leave BIR (bulk-in empty response) clear - see below
  *   4. program BURST_CAP + BULK_IN_DELAY (framing coalescer)
  *   5. enable HW_CFG.BCE|MEF / USB_CFG0.BCE (burst + multi-ethernet)
  *   6. set undocumented FIFO end markers on LAN7500 family only
@@ -1710,19 +1703,14 @@ static LONG lan78xx_chip_init(struct NepClassEth *ncp)
     }
 
     /*
-     * Do NOT set BIR.
-     *
-     * Leaving BIR clear is what makes the chip drive the bulk-IN
-     * endpoint in the "NAK-when-empty / DATA-when-ready" mode that DWC2
-     * expects. With BIR=1 the chip stops responding to IN tokens
-     * entirely on this silicon revision (no NAK, no ZLP - total
-     * silence), and DWC2's watchdog has to force-fail every read after
-     * 3 s, which surfaces as `act=0/18944 err=6 last_intr=0000` to the
-     * SANA-II layer.
-     *
-     * The "NAK until we're ready" hand-off this would otherwise enable
-     * is unnecessary: a normal LRST already keeps the bulk-IN silent
-     * until the chip's RX path is enabled below (FCT_RX_CTL + MAC_RX).
+     * BIR (bulk-in empty response) stays clear: an idle bulk-IN completes
+     * with a zero-length packet, which the RX idle-streak pacing absorbs.
+     * Set, the chip NAKs instead. The bit is USB_CFG0 bit 6 on LAN78xx
+     * (Linux USB_CFG_BIR_) and HW_CFG bit 7 on LAN7500; AROS 14ff79a6
+     * writes HW_CFG bit 7 on both, which on LAN78xx is the SUSPEND_N pin
+     * select. Left clear because a host that cannot hold a NAKing bulk-IN
+     * times every read out (reported on the Pi 3B+ DWC2 driver: reads
+     * failed after 3 s with err=6).
      */
 
     /* Burst cap + bulk-in delay.  Pi3 is HS - use the high-speed sizing. */

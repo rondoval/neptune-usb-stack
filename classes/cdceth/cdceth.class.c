@@ -1525,9 +1525,6 @@ void nDoEvent(struct NepClassEth *ncp, ULONG events)
 /* \\\ */
 
 /* /// "support routines" */
-/* SANA-II buffer management functions take their arguments in a0/a1/d0 */
-typedef BOOL (*S2CopyBuffFunc)(APTR to asm("a0"), APTR from asm("a1"), ULONG len asm("d0"));
-
 #define callfilter CallHookPkt
 /* \\\ */
 
@@ -1567,6 +1564,7 @@ BOOL nWritePacket(struct NepClassEth *ncp, struct IOSana2Req *ioreq)
         ioreq->ios2_DataLength   = 0;
         ioreq->ios2_Req.io_Error = S2ERR_MTU_EXCEEDED;
         ioreq->ios2_WireError    = S2WERR_GENERIC_ERROR;
+        ReplyMsg((struct Message *) ioreq);
         return FALSE;
     }
 
@@ -1586,8 +1584,7 @@ BOOL nWritePacket(struct NepClassEth *ncp, struct IOSana2Req *ioreq)
     }
 
     /* Dma not available, fallback to regular copy */
-    S2CopyBuffFunc CopyFromBuff = (S2CopyBuffFunc) bufman->bm_CopyFromBuf;
-    if(!CopyFromBuff(copydest, ioreq->ios2_Data, ioreq->ios2_DataLength))
+    if(!nCallS2Copy(bufman->bm_CopyFromBuf, copydest, ioreq->ios2_Data, ioreq->ios2_DataLength))
     {
         KPRINTF(10, ("writepacket: copyfrom returned failure!\n"));
 
@@ -1600,6 +1597,7 @@ BOOL nWritePacket(struct NepClassEth *ncp, struct IOSana2Req *ioreq)
         ioreq->ios2_DataLength   = 0;
         ioreq->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
         ioreq->ios2_WireError    = S2WERR_BUFF_ERROR;
+        ReplyMsg((struct Message *) ioreq);
         return FALSE;
     }
 
@@ -1703,8 +1701,8 @@ UWORD nReadIOReq(struct NepClassEth *ncp, struct EtherPacketHeader *eph, UWORD d
     }
 
     /* Finally copy the packet data! */
-    S2CopyBuffFunc CopyToBuff = (S2CopyBuffFunc) ((struct BufMan *) ioreq->ios2_BufferManagement)->bm_CopyToBuf;
-    if(CopyToBuff(ioreq->ios2_Data, copyfrom, ioreq->ios2_DataLength))
+    if(nCallS2Copy(((struct BufMan *) ioreq->ios2_BufferManagement)->bm_CopyToBuf,
+                   ioreq->ios2_Data, copyfrom, ioreq->ios2_DataLength))
     {
         DB(
         KPRINTF(5, ("readioreq: copytobuffed packet ior 0x%08lx, %04lx%08lx < %04lx%08lx, type %lu, %lu bytes, %s%s%s\n",

@@ -75,6 +75,15 @@ static inline void nApplyInputTaskPriFloor(void)
     }
 }
 
+/* SANA-II buffer management copy hook (S2_CopyToBuff/S2_CopyFromBuff):
+ * a0 = to, a1 = from, d0 = length; returns a 16-bit BOOL. */
+typedef BOOL (*S2CopyBuffFunc)(APTR to asm("a0"), APTR from asm("a1"), ULONG len asm("d0"));
+
+static inline BOOL nCallS2Copy(APTR func, APTR to, APTR from, ULONG len)
+{
+    return ((S2CopyBuffFunc) func)(to, from, len);
+}
+
 /* Log wordings shared by every class driver. */
 #define NEP_BOUND_TXT     "Bound '%s' to %s unit %ld."   /* devname, unit name, unit no */
 #define NEP_BOUND1_TXT    "Bound '%s'."                  /* devname */
