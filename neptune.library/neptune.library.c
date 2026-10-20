@@ -10975,7 +10975,7 @@ void pEventHandlerTask()
                         SendIO(&ph->ph_TimerIOReq->tr_node);
                         sigmask = (1UL<<ph->ph_MsgPort->mp_SigBit)|(1UL<<ph->ph_TimerMsgPort->mp_SigBit)|SIGBREAKF_CTRL_C;
                         counter = 0;
-                        cfgchanged = 0;
+                        cfgchanged = 0;     /* tick of the first pending change + 1; 0 = none */
                         do {
                             if(ps->ps_CheckConfigReq) {
                                 pCheckCfgChanged(ps);
@@ -10994,7 +10994,7 @@ void pEventHandlerTask()
                                 switch(pen->pen_Event) {
                                 case EHMB_CONFIGCHG:
                                     if(!cfgchanged) {
-                                        cfgchanged = counter;
+                                        cfgchanged = counter + 1;
                                     }
                                     break;
 
@@ -11032,7 +11032,8 @@ void pEventHandlerTask()
                                         psdAddErrorMsg0(RETURN_OK, (STRPTR) libname, "Notifier started.");
                                     }
                                 }
-                                if((cfgchanged + 2) == counter) {
+                                /* two ticks after the first change */
+                                if(cfgchanged && ((cfgchanged + 1) == counter)) {
                                     KPRINTF(10, ("Sending information about config changed to all classes.\n"));
                                     /* Inform all classes */
                                     psdLockReadPBase();
