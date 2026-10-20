@@ -106,15 +106,18 @@ flowchart TB
   control request afterwards. Each open mode has its own EP0 pipe, used from the AHI caller for the
   alternate setting and the rate.
 - **Control updates** cross from AHI to the task as stored values plus a `UAF_*` bit in
-  `nch_UpdateFlags` and a signal; the task applies every pending bit to the current mode and clears
-  the word.
+  `nch_UpdateFlags` and a signal; the task takes and clears the word together with the current mode
+  under `Forbid()`, then applies the bits to that mode. With no mode open they are dropped - the
+  values stay in the mode, and AHI sets them again at the next open.
 - **Playback buffers** are double: the device plays pass N while AHI mixes pass N+1. The soft
   interrupt alone writes the fill and send indices; the OUT hook reads the send index when it
   latches a buffer.
 - **`nch_DenyRequests`** gates the data path: set from bind until a mode is realised, and again on
   unplug and release. While set, the OUT hook sends nothing and the player skips the mix.
-- **One open mode per binding** is assumed by `nch_CurrentMode`, the per-binding hook structures and
-  the interface's alternate setting. `subLibAllocAudio` refuses only a second open of the same mode.
+- **One open mode per binding**, as `nch_CurrentMode`, the per-binding hook structures and the
+  interface's alternate setting require. `subLibAllocAudio` claims `nch_CurrentMode` under
+  `Forbid()` before anything else and refuses any open while it is held; `subLibFreeAudio`, which
+  AHI calls even after a failed open, gives it back as its last step.
 
 ---
 
@@ -295,14 +298,16 @@ until it stops.
 ### 5.7 Release, suspend and settings
 
 - **Release.** `usbReleaseInterfaceBinding` (for example from the hub task in `psdFreeDevice`) sets
-  `nch_DenyRequests`, unlinks the binding from `nh_Units`, sends CTRL-C to the binding task and
-  waits for it to exit. The task first waits, polling, until AHI has closed the open mode (rule 8);
-  then `nFreeAudio` removes the AHI modes, frees the unit graph and pipe, and closes ahi.device.
-- **Bindings are not reused or freed.** The reuse lookup in `usbForceInterfaceBinding` compares
-  identity fields (`nch_UnitVendorID`, `nch_UnitProdID`, `nch_UnitIfNum`, `nch_UnitAltIfNum`) that
-  nothing fills in, and `libExpunge` frees only bindings still in `nh_Units`. So every bind
-  allocates and parses afresh, and every release leaves one binding and its modes allocated. Unit
-  numbers are reused: a bind takes the lowest one not in the list.
+  `nch_DenyRequests`, sends CTRL-C to the binding task and waits for it to exit. The task first
+  waits, polling, until AHI has closed the open mode (rule 8); then `nFreeAudio` removes the AHI
+  modes, frees the unit graph and pipe, and closes ahi.device. The release then unlinks the binding
+  from `nh_Units` and frees it with its modes (`nFreeBinding`).
+- **A binding lives from bind to release.** Every bind allocates and parses afresh; a bind whose
+  task fails is freed at once. A unit number is the lowest one not in `nh_Units`, so a replugged
+  device gets its old number and AHI mode IDs back. The one exception: if AHI opened a mode in the
+  instant between the task's last check and `nFreeAudio` taking the modes out of AHI, the release
+  leaves the binding listed, and `libExpunge` - which runs only once AHI has closed the
+  sub-driver - frees it.
 - **Suspend.** `UCM_AttemptSuspendDevice` is refused while a mode is open. The idle sweep does not
   ask while a stream runs anyway: `psdStartRTIso` holds the device busy (core doc §5.7, §5.10).
   `UCM_AttemptResumeDevice` only signals the binding task.
@@ -361,9 +366,10 @@ Each rule exists because breaking it caused, or would cause, a real failure.
 13. **Indices from AHI are checked against what was offered.** `nInputName` and `nOutputName` give
     the count; beyond it a name is NULL and a selection is refused. Unchecked indices read past the
     name arrays and selected inputs that did not exist.
-14. **Graph searches are depth-bounded.** Descriptors can wire a loop, so `nIsUpstream` and
-    `nOutputBranch` stop at `UNIT_DEPTH_MAX`; edges are capped at 8 per side. The `nFlow*` passes
-    carry no bound yet.
+14. **The unit graph is acyclic.** Descriptors can wire a loop, so `nFindAndConnectAudioUnit`
+    refuses an edge that would close one (a unit fed by itself, or by a unit it already feeds) and
+    logs it; edges are capped at 8 per side. Every walk over the graph - the `nFlow*` passes,
+    `nIsUpstream`, `nOutputBranch` - therefore ends; the last two also stop at `UNIT_DEPTH_MAX`.
 15. **ROM-able: no writable globals.** The GUI task takes its MUI base from `tc_UserData`
     (`mui_base.h`), and `mui_compat.h` replaces the SDK's inline `MUI_NewObject`, broken at every
     optimisation level.

@@ -107,10 +107,29 @@ int libOpen(struct NepAudioBase * nh)
     return(TRUE);
 }
 
+/* /// "nFreeBinding()" */
+/* A binding's memory: its modes, then itself. Unlinked, no task, no mode
+   open. */
+static void nFreeBinding(struct NepClassAudio *nch)
+{
+    struct NepAudioMode *nam = (struct NepAudioMode *) nch->nch_AudioModes.lh_Head;
+
+    while(nam->nam_Node.ln_Succ)
+    {
+        struct NepAudioMode *next = (struct NepAudioMode *) nam->nam_Node.ln_Succ;
+
+        FreeVec(nam);
+        nam = next;
+    }
+    FreeVec(nch);
+}
+/* \\\ */
+
+/* Only with AHI gone (the sub-driver's own open count left): a binding still
+   listed here was kept by a release that found a mode open (usbReleaseInterfaceBinding) */
 int libExpunge(struct NepAudioBase * nh)
 {
     struct NepClassAudio *nch;
-    struct NepAudioMode *nam;
 
     KPRINTF(10, ("libExpunge nh: 0x%08lx\n", nh));
 
@@ -124,15 +143,7 @@ int libExpunge(struct NepAudioBase * nh)
         while(nch->nch_Node.ln_Succ)
         {
             Remove((struct Node *) nch);
-            nam = (struct NepAudioMode *) nch->nch_AudioModes.lh_Head;
-            while(nam->nam_Node.ln_Succ)
-            {
-                Remove(&nam->nam_Node);
-                FreeVec(nam);
-                nam = (struct NepAudioMode *) nch->nch_AudioModes.lh_Head;
-            }
-
-            FreeVec(nch);
+            nFreeBinding(nch);
             nch = (struct NepClassAudio *) nh->nh_Units.lh_Head;
         }
 
@@ -246,13 +257,7 @@ struct NepClassAudio * usbForceInterfaceBinding(struct NepAudioBase *nh, struct 
     struct PsdConfig *pc;
     struct PsdDevice *pd;
     STRPTR devname;
-    IPTR altifnum;
-    IPTR ifnum;
-    IPTR cfgnum;
-    IPTR prodid;
-    IPTR vendid;
     ULONG unitno;
-    BOOL  unitfound;
     UBYTE buf[64];
     struct Task *tmptask;
 
@@ -260,64 +265,44 @@ struct NepClassAudio * usbForceInterfaceBinding(struct NepAudioBase *nh, struct 
     if((ps = OpenLibrary(NEPTUNENAME, NEPTUNE_LIB_MIN_VERSION)))
     {
         psdGetAttrs(PGA_INTERFACE, pif,
-                    IFA_InterfaceNum, &ifnum,
-                    IFA_AlternateNum, &altifnum,
                     IFA_Config, &pc,
                     TAG_DONE);
         psdGetAttrs(PGA_CONFIG, pc,
                     CA_Device, &pd,
-                    CA_ConfigNum, &cfgnum,
                     TAG_END);
         psdGetAttrs(PGA_DEVICE, pd,
-                    DA_ProductID, &prodid,
-                    DA_VendorID, &vendid,
                     DA_ProductName, &devname,
                     TAG_END);
-        unitno = 0;
-        nch = (struct NepClassAudio *) nh->nh_Units.lh_Head;
-        while(nch->nch_Node.ln_Succ)
+        /* AllocVec: a binding a release keeps is freed by libExpunge,
+           outside the scope of neptune.library */
+        if(!(nch = AllocVec(sizeof(struct NepClassAudio), MEMF_PUBLIC|MEMF_CLEAR)))
         {
-            if(nch->nch_UnitNo == unitno)
+            CloseLibrary(ps);
+            return(NULL);
+        }
+        nch->nch_ClsBase = nh;
+        nch->nch_Device = NULL;
+        nch->nch_Interface = pif;
+        NewList(&nch->nch_AudioModes);
+        NewList(&nch->nch_AudioUnits);
+        /* the lowest unit number not taken: a replugged device gets its old
+           one back, and with it its AHI mode IDs */
+        Forbid();
+        unitno = 0;
+        struct NepClassAudio *other = (struct NepClassAudio *) nh->nh_Units.lh_Head;
+        while(other->nch_Node.ln_Succ)
+        {
+            if(other->nch_UnitNo == unitno)
             {
                 unitno++;
-                nch = (struct NepClassAudio *) nh->nh_Units.lh_Head;
+                other = (struct NepClassAudio *) nh->nh_Units.lh_Head;
             } else {
-                nch = (struct NepClassAudio *) nch->nch_Node.ln_Succ;
+                other = (struct NepClassAudio *) other->nch_Node.ln_Succ;
             }
         }
-        unitfound = FALSE;
-        nch = (struct NepClassAudio *) nh->nh_Units.lh_Head;
-        while(nch->nch_Node.ln_Succ)
-        {
-            if((nch->nch_UnitAltIfNum == altifnum) && (nch->nch_UnitIfNum == ifnum) &&
-               (nch->nch_UnitProdID == prodid) && (nch->nch_UnitVendorID == vendid))
-            {
-                unitno = nch->nch_UnitNo;
-                unitfound = TRUE;
-                break;
-            }
-            nch = (struct NepClassAudio *) nch->nch_Node.ln_Succ;
-        }
-        if(!unitfound)
-        {
-            /* as units are freed in the expunge-vector, the memory is
-               outside the scope of neptune.library */
-            if(!(nch = AllocVec(sizeof(struct NepClassAudio), MEMF_PUBLIC|MEMF_CLEAR)))
-            {
-                Permit();
-                CloseLibrary(ps);
-                return(NULL);
-            }
-            nch->nch_ClsBase = nh;
-            nch->nch_Device = NULL;
-            nch->nch_Interface = pif;
-            nch->nch_UnitNo = unitno;
-            NewList(&nch->nch_AudioModes);
-            NewList(&nch->nch_AudioUnits);
-            Forbid();
-            AddTail(&nh->nh_Units, &nch->nch_Node);
-            Permit();
-        }
+        nch->nch_UnitNo = unitno;
+        AddTail(&nh->nh_Units, &nch->nch_Node);
+        Permit();
         nch->nch_DenyRequests = TRUE;
  
         nLoadClassConfig(nh);
@@ -343,6 +328,11 @@ struct NepClassAudio * usbForceInterfaceBinding(struct NepAudioBase *nh, struct 
         }
         nch->nch_ReadySigTask = NULL;
         //FreeSignal(nch->nch_ReadySignal);
+        /* the task never got going: no AHI mode was added */
+        Forbid();
+        Remove(&nch->nch_Node);
+        Permit();
+        nFreeBinding(nch);
         CloseLibrary(ps);
     }
     return(NULL);
@@ -362,7 +352,6 @@ void usbReleaseInterfaceBinding(struct NepAudioBase *nh, struct NepClassAudio *n
     {
         Forbid();
         nch->nch_DenyRequests = TRUE;
-        Remove(&nch->nch_Node);
         nch->nch_ReadySignal = SIGB_SINGLE;
         nch->nch_ReadySigTask = FindTask(NULL);
         if(nch->nch_Task)
@@ -381,6 +370,18 @@ void usbReleaseInterfaceBinding(struct NepAudioBase *nh, struct NepClassAudio *n
         psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
                        NEP_RELEASED_TXT,
                        devname);
+        /* The task left with no mode open and took the modes out of AHI.
+           A mode AHI opened in between keeps the binding listed, for
+           libExpunge. */
+        Forbid();
+        if(!nch->nch_CurrentMode)
+        {
+            Remove(&nch->nch_Node);
+            Permit();
+            nFreeBinding(nch);
+        } else {
+            Permit();
+        }
         CloseLibrary(ps);
     }
 }
@@ -669,6 +670,45 @@ static struct NepAudioUnit * nOutVolumeUnit(struct NepAudioMode *nam)
 }
 /* \\\ */
 
+/* /// "nModeTerminal()" */
+/* TRUE if nau is a terminal of type (input or output terminal), not a USB
+   streaming one, that a mode's stream reaches: an output terminal the
+   playback stream flows to (nau_SourceUnit), an input terminal that flows to
+   the recording stream (nau_SinkUnit). With all, any such terminal - the
+   fallback when the tagging found none. */
+static BOOL nModeTerminal(struct NepAudioMode *nam, struct NepAudioUnit *nau, UWORD type, BOOL all)
+{
+    if((nau->nau_Type != type) || (nau->nau_TermType == UAUTT_STREAMING))
+    {
+        return FALSE;
+    }
+    if(all)
+    {
+        return TRUE;
+    }
+    struct NepAudioUnit *stream = (type == UDST_AUDIO_CTRL_OUTPUT_TERMINAL) ? nau->nau_SourceUnit : nau->nau_SinkUnit;
+    return nam->nam_RootUnit && (stream == nam->nam_RootUnit);
+}
+/* \\\ */
+
+/* /// "nModeInput()" */
+/* The num-th input terminal a recording mode's stream reaches (nModeTerminal),
+   in the order of nInputNames; NULL if there are fewer */
+static struct NepAudioUnit * nModeInput(struct NepClassAudio *nch, struct NepAudioMode *nam, ULONG num, BOOL all)
+{
+    for(struct NepAudioUnit *nau = (struct NepAudioUnit *) nch->nch_AudioUnits.lh_Head;
+        nau->nau_Node.ln_Succ;
+        nau = (struct NepAudioUnit *) nau->nau_Node.ln_Succ)
+    {
+        if(nModeTerminal(nam, nau, UDST_AUDIO_CTRL_INPUT_TERMINAL, all) && !num--)
+        {
+            return nau;
+        }
+    }
+    return NULL;
+}
+/* \\\ */
+
 /* /// "nGetInputUnit()" */
 struct NepAudioUnit * nGetInputUnit(struct NepAudioMode *nam)
 {
@@ -680,7 +720,14 @@ struct NepAudioUnit * nGetInputUnit(struct NepAudioMode *nam)
         {
             nau = recnam->nam_RootUnit->nau_SelectorUnit->nau_InputUnit[nam->nam_CurrInput]->nau_RootUnit;
         } else {
-            nau = recnam->nam_RootUnit;
+            /* the input terminal AHI's input number names, counted as
+               nInputNames named them: the gain and monitor of a path are kept
+               on its input terminal, not on the stream's output terminal */
+            nau = nModeInput(nam->nam_Unit, recnam, nam->nam_CurrInput, FALSE);
+            if(!nau && !nModeInput(nam->nam_Unit, recnam, 0, FALSE))
+            {
+                nau = nModeInput(nam->nam_Unit, recnam, nam->nam_CurrInput, TRUE);
+            }
         }
     }
     return(nau);
@@ -824,6 +871,7 @@ void nAudioTask()
     struct NepAudioUnit *innau;
     ULONG sigmask;
     ULONG sigs;
+    ULONG flags;
     UBYTE buf[2];
     LONG ioerr;
 
@@ -840,11 +888,20 @@ void nAudioTask()
         {
             //psdDoPipe(nch->nch_CurrentMode->nam_EPPipe, nch, 1024);
             sigs = Wait(sigmask);
-            if(nch->nch_UpdateFlags)
+            /* Taken with the mode they are for: AHI sets bits and closes the
+               mode from its own task. A bit set from here on stays for the
+               next wake. With no mode open there is nothing to set - the
+               values stay in the mode, and AHI sets them again at the next
+               open. */
+            Forbid();
+            flags = nch->nch_UpdateFlags;
+            nch->nch_UpdateFlags = 0;
+            nam = nch->nch_CurrentMode;
+            Permit();
+            if(flags && nam)
             {
-                nam = nch->nch_CurrentMode;
                 recnam = nRecMode(nam);
-                if((nch->nch_UpdateFlags & UAF_SELECT_INPUT) && recnam && recnam->nam_RootUnit->nau_SelectorUnit)
+                if((flags &UAF_SELECT_INPUT) && recnam && recnam->nam_RootUnit->nau_SelectorUnit)
                 {
                     struct NepAudioUnit *nau = recnam->nam_RootUnit->nau_SelectorUnit;
                     KPRINTF(10, ("Setting input %ld to %08lx\n", nau->nau_UnitID, nam->nam_CurrInput));
@@ -858,7 +915,7 @@ void nAudioTask()
                                        psdNumToStr(NTS_IOERR, ioerr, "unknown"), ioerr);
                     }
                 }
-                if(nch->nch_UpdateFlags & UAF_SELECT_OUTPUT)
+                if(flags &UAF_SELECT_OUTPUT)
                 {
                     /* AHI output 0 is all outputs, k the k-th alone (nam_Outputs[k - 1]) */
                     for(ULONG cnt = 0; cnt < nam->nam_NumOutputs; cnt++)
@@ -868,7 +925,7 @@ void nAudioTask()
                         nSetMute(nch, nam->nam_Outputs[cnt].nao_Mute, mute);
                     }
                 }
-                if(nch->nch_UpdateFlags & UAF_MASTER_VOLUME)
+                if(flags &UAF_MASTER_VOLUME)
                 {
                     /* the volume upstream of every output, else each output's own;
                        muted ones too, so switching needs no new volume */
@@ -886,15 +943,14 @@ void nAudioTask()
                     }
                 }
                 innau = nGetInputUnit(nam);
-                if((nch->nch_UpdateFlags & UAF_INPUT_GAIN) && innau && innau->nau_VolumeControl)
+                if((flags &UAF_INPUT_GAIN) && innau && innau->nau_VolumeControl)
                 {
                     nSetVolume(nch, innau->nau_VolumeUnit, nam->nam_InputGain, "input gain");
                 }
-                if((nch->nch_UpdateFlags & UAF_MONITOR_VOLUME) && innau && innau->nau_Monitor)
+                if((flags &UAF_MONITOR_VOLUME) && innau && innau->nau_Monitor)
                 {
                     nSetVolume(nch, innau->nau_MonitorUnit, nam->nam_MonitorVol, "monitor volume");
                 }
-                nch->nch_UpdateFlags = 0;
             }
         } while(!(sigs & SIGBREAKF_CTRL_C));
         if(nch->nch_CurrentMode)
@@ -931,13 +987,42 @@ struct NepAudioUnit * nFindAudioUnit(struct NepClassAudio *nch, ULONG unitid)
 }
 /* \\\ */
 
+/* /// "nIsUpstream()" */
+/* Does unit feed into of, directly or through other units? Descriptors may
+   wire a loop: the search goes no deeper than UNIT_DEPTH_MAX units. */
+static BOOL nIsUpstream(struct NepAudioUnit *unit, struct NepAudioUnit *of, UWORD depth)
+{
+    if(!depth)
+    {
+        return FALSE;
+    }
+    for(UWORD cnt = 0; cnt < of->nau_NumInputs; cnt++)
+    {
+        struct NepAudioUnit *in = of->nau_InputUnit[cnt];
+
+        if((in == unit) || nIsUpstream(unit, in, depth - 1))
+        {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+/* \\\ */
+
 /* /// "nFindAndConnectAudioUnit()" */
+/* Link a unit to the one feeding it. An edge that would close a loop is
+   refused, so the graph stays acyclic and every walk over it ends. */
 void nFindAndConnectAudioUnit(struct NepClassAudio *nch, struct NepAudioUnit *targetnau, ULONG unitid)
 {
     struct NepAudioUnit *sourcenau = nFindAudioUnit(nch, unitid);
     KPRINTF(10, ("Connecting unit %02lx to %02lx\n", unitid, targetnau->nau_UnitID));
     if(!sourcenau)
     {
+        return;
+    }
+    if((sourcenau == targetnau) || nIsUpstream(targetnau, sourcenau, UNIT_DEPTH_MAX))
+    {
+        psdAddErrorMsg(RETURN_WARN, (STRPTR) libname, "Unit %02lx would feed itself; link ignored.", unitid);
         return;
     }
     if(sourcenau->nau_NumOutputs < 8)
@@ -1417,27 +1502,6 @@ void nFindLogVolume(struct NepClassAudio *nch, struct NepAudioUnit *nau)
 }
 /* \\\ */
 
-/* /// "nModeTerminal()" */
-/* TRUE if nau is a terminal of type (input or output terminal), not a USB
-   streaming one, that a mode's stream reaches: an output terminal the
-   playback stream flows to (nau_SourceUnit), an input terminal that flows to
-   the recording stream (nau_SinkUnit). With all, any such terminal - the
-   fallback when the tagging found none. */
-static BOOL nModeTerminal(struct NepAudioMode *nam, struct NepAudioUnit *nau, UWORD type, BOOL all)
-{
-    if((nau->nau_Type != type) || (nau->nau_TermType == UAUTT_STREAMING))
-    {
-        return FALSE;
-    }
-    if(all)
-    {
-        return TRUE;
-    }
-    struct NepAudioUnit *stream = (type == UDST_AUDIO_CTRL_OUTPUT_TERMINAL) ? nau->nau_SourceUnit : nau->nau_SinkUnit;
-    return nam->nam_RootUnit && (stream == nam->nam_RootUnit);
-}
-/* \\\ */
-
 /* /// "nInputNames()" */
 /* Name the input terminals a recording mode's stream reaches (nModeTerminal;
    with all, every input terminal) into nam_InputNames, at most
@@ -1456,28 +1520,6 @@ static ULONG nInputNames(struct NepClassAudio *nch, struct NepAudioMode *nam, BO
         }
     }
     return count;
-}
-/* \\\ */
-
-/* /// "nIsUpstream()" */
-/* Does unit feed into of, directly or through other units? Descriptors may
-   wire a loop: the search goes no deeper than UNIT_DEPTH_MAX units. */
-static BOOL nIsUpstream(struct NepAudioUnit *unit, struct NepAudioUnit *of, UWORD depth)
-{
-    if(!depth)
-    {
-        return FALSE;
-    }
-    for(UWORD cnt = 0; cnt < of->nau_NumInputs; cnt++)
-    {
-        struct NepAudioUnit *in = of->nau_InputUnit[cnt];
-
-        if((in == unit) || nIsUpstream(unit, in, depth - 1))
-        {
-            return TRUE;
-        }
-    }
-    return FALSE;
 }
 /* \\\ */
 
@@ -3615,11 +3657,20 @@ ULONG (subLibAllocAudio)(struct TagItem * tags asm("a1"), struct AHIAudioCtrlDrv
         audioctrl->ahiac_DriverData = NULL;
         return AHISF_ERROR;
     }
-    if(nam->nam_RTIso)
+    /* one open mode per binding: the hooks, the task's current mode and the
+       interface's alternate setting are the binding's. The claim is given
+       back by subLibFreeAudio, which AHI calls even when this fails. */
+    nch = nam->nam_Unit;
+    Forbid();
+    if(nch->nch_CurrentMode)
     {
+        Permit();
         KPRINTF(20, ("Already in use!\n"));
+        audioctrl->ahiac_DriverData = NULL;
         return AHISF_ERROR;
     }
+    nch->nch_CurrentMode = nam;
+    Permit();
     audioctrl->ahiac_DriverData = nam;
     nam->nam_AudioCtrl = audioctrl;
     if(!(nam->nam_PsdBase = OpenLibrary(NEPTUNENAME, NEPTUNE_LIB_MIN_VERSION)))
@@ -3679,7 +3730,6 @@ ULONG (subLibAllocAudio)(struct TagItem * tags asm("a1"), struct AHIAudioCtrlDrv
         }
     }
 
-    nch = nam->nam_Unit;
     KPRINTF(10, ("CreateMsgPort\n"));
     if(!(nam->nam_TaskMsgPort = CreateMsgPort()))
     {
@@ -3695,7 +3745,6 @@ ULONG (subLibAllocAudio)(struct TagItem * tags asm("a1"), struct AHIAudioCtrlDrv
     {
         return AHISF_ERROR;
     }
-    nch->nch_CurrentMode = nam;
 
     flags = AHISF_MIXING;
     if(nam->nam_NumChannels > 1)
@@ -3857,15 +3906,16 @@ void (subLibFreeAudio)(struct AHIAudioCtrlDrv * audioctrl asm("a2"), struct NepA
     struct NepAudioMode *nam = (struct NepAudioMode *) audioctrl->ahiac_DriverData;
 
     KPRINTF(10, ("subLibFreeAudio(%08lx)\n", audioctrl));
+    /* no mode: the open was refused before claiming one */
     if(!nam)
     {
         return;
     }
     if(!nam->nam_PsdBase)
     {
+        nam->nam_Unit->nch_CurrentMode = NULL;
         return;
     }
-    nam->nam_Unit->nch_CurrentMode = NULL;
     struct NepAudioMode *recnam = nam->nam_RecStream;
 
     if(recnam)
@@ -3945,7 +3995,9 @@ void (subLibFreeAudio)(struct AHIAudioCtrlDrv * audioctrl asm("a2"), struct NepA
 
     CloseLibrary(nam->nam_PsdBase);
     nam->nam_PsdBase = NULL;
-    
+    /* last: once it is NULL the binding task may end and a release free
+       the mode */
+    nam->nam_Unit->nch_CurrentMode = NULL;
 }
 /* \\\ */
 

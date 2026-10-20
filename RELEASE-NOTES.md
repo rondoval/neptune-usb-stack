@@ -127,6 +127,8 @@ interface once in the MIDI Ports editor.
 * Possible crash on disk change with several partitions.
 * **Full-speed host controllers** (such as the Subway clockport card) work again; since 6.1
   their root hub failed to enumerate.
+* **USB audio:** webcam microphones now offer input gain; a second program can no longer
+  open a device already in use; unplugging no longer leaks memory.
 * **Standard USB network devices** (cdceth, CDC ECM/NCM) now pass traffic, including
   multicast; NCM no longer drops packets under load.
 * **USB network adapters** (asixeth, davicometh, ethwrap, lan78xx, moschipeth, pegasuseth,
