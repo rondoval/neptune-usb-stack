@@ -7793,6 +7793,67 @@ void (psdUnbindAll)(struct PsdBase * ps asm("a6"))
 }
 /* \\\ */
 
+/* /// "pFindForcedBinding()" */
+/* The class name a device (ifid NULL) or interface is forced to, as a
+   pointer into the live config, or NULL. The caller holds ps_ConfigLock. */
+static STRPTR pFindForcedBinding(struct PsdBase *ps, STRPTR devid, STRPTR ifid)
+{
+    struct PsdIFFContext *pic;
+    struct PsdIFFContext *mpic;
+    ULONG *chunk;
+
+    /* Find device config form. It contains all device config data */
+    pic = psdFindCfgForm(NULL, IFFFORM_DEVICECFG);
+    while(pic) {
+        /* Find DEVID-Chunk. Check if it matches our device id */
+        if(pMatchStringChunk(ps, pic, IFFCHNK_DEVID, devid)) {
+            /* We found the correct device. Now if we need to store interface data, find the interface first */
+            if(!ifid) {
+                /* Search for device forced binding */
+                chunk = pFindCfgChunk(ps, pic, IFFCHNK_FORCEDBIND);
+                return chunk ? (STRPTR) &chunk[2] : NULL;
+            }
+            /* Search interface config form */
+            mpic = psdFindCfgForm(pic, IFFFORM_IFCFGDATA);
+            while(mpic) {
+                /* Found the form. Find the the ID String for the interface */
+                if(pMatchStringChunk(ps, mpic, IFFCHNK_IFID, ifid)) {
+                    /* ID did match, now check for forced binding */
+                    chunk = pFindCfgChunk(ps, mpic, IFFCHNK_FORCEDBIND);
+                    if(chunk) {
+                        return (STRPTR) &chunk[2];
+                    }
+                }
+                mpic = psdNextCfgForm(mpic);
+            }
+            return NULL;
+        }
+        pic = psdNextCfgForm(pic);
+    }
+    return NULL;
+}
+/* \\\ */
+
+/* /// "pCopyForcedBinding()" */
+/* As psdGetForcedBinding(), but the class name is copied to buf (size bytes,
+   cut short if longer) while the config is still locked: the class scan
+   holds on to it across binds that may rewrite the config. Returns buf, or
+   NULL if there is no forced binding. */
+static STRPTR pCopyForcedBinding(struct PsdBase *ps, STRPTR devid, STRPTR ifid, STRPTR buf, ULONG size)
+{
+    STRPTR owner;
+
+    pLockSemShared(ps, &ps->ps_ConfigLock);
+    owner = pFindForcedBinding(ps, devid, ifid);
+    if(owner) {
+        strncpy(buf, owner, size - 1);
+        buf[size - 1] = 0;
+    }
+    pUnlockSem(ps, &ps->ps_ConfigLock);
+    return owner ? buf : NULL;
+}
+/* \\\ */
+
 /* /// "psdHubClassScan()" */
 void (psdHubClassScan)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm("a6"))
 {
@@ -7806,6 +7867,7 @@ void (psdHubClassScan)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm(
     UWORD hasifbinding;
     BOOL mainif;
     STRPTR owner;
+    UBYTE ownerbuf[64];   /* forced class name, a copy (pCopyForcedBinding) */
 
     KPRINTF(5, ("psdClassScan()\n"));
 
@@ -7836,7 +7898,7 @@ void (psdHubClassScan)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm(
             pc = (struct PsdConfig *) pc->pc_Node.ln_Succ;
         }
 
-        owner = psdGetForcedBinding(pd->pd_IDString, NULL);
+        owner = pCopyForcedBinding(ps, pd->pd_IDString, NULL, ownerbuf, sizeof(ownerbuf));
         if((!hasifbinding) && owner) {
             puc = (struct PsdUsbClass *) ps->ps_Classes.lh_Head;
             while(puc->puc_Node.ln_Succ) {
@@ -7881,7 +7943,7 @@ void (psdHubClassScan)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm(
                                While probing, the interface tree stays untouched, so iteration is
                                simply firstpif followed by firstpif's pif_AlterIfs list. */
                             do {
-                                owner = psdGetForcedBinding(pd->pd_IDString, pif->pif_IDString);
+                                owner = pCopyForcedBinding(ps, pd->pd_IDString, pif->pif_IDString, ownerbuf, sizeof(ownerbuf));
                                 puc = (struct PsdUsbClass *) ps->ps_Classes.lh_Head;
                                 while(puc->puc_Node.ln_Succ) {
                                     KPRINTF(5, (">>>PING %s!\n", puc->puc_ClassName));
@@ -7979,7 +8041,7 @@ void (psdHubClassScan)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm(
         if(!hasifbinding) {
             //pd->pd_DevBinding = (APTR) ~0UL;
             binding = NULL;
-            owner = psdGetForcedBinding(pd->pd_IDString, NULL);
+            owner = pCopyForcedBinding(ps, pd->pd_IDString, NULL, ownerbuf, sizeof(ownerbuf));
             puc = (struct PsdUsbClass *) ps->ps_Classes.lh_Head;
             while(puc->puc_Node.ln_Succ) {
                 binding = NULL;
@@ -8945,16 +9007,22 @@ BOOL (psdSetClsCfg)(STRPTR owner asm("a0"), APTR form asm("a1"), struct PsdBase 
 struct PsdIFFContext * (psdGetClsCfg)(STRPTR owner asm("a0"), struct PsdBase * ps asm("a6"))
 {
     struct PsdIFFContext *pic;
+    struct PsdIFFContext *res = NULL;
 
     KPRINTF(10, ("psdGetClsCfg(%s)\n", owner));
+    /* shared, as psdGetUsbDevCfg(): a config load must not swap forms
+       under the walk */
+    pLockSemShared(ps, &ps->ps_ConfigLock);
     pic = psdFindCfgForm(NULL, IFFFORM_CLASSCFG);
     while(pic) {
         if(pMatchStringChunk(ps, pic, IFFCHNK_OWNER, owner)) {
-            return(psdFindCfgForm(pic, IFFFORM_CLASSDATA));
+            res = psdFindCfgForm(pic, IFFFORM_CLASSDATA);
+            break;
         }
         pic = psdNextCfgForm(pic);
     }
-    return(NULL);
+    pUnlockSem(ps, &ps->ps_ConfigLock);
+    return res;
 }
 /* \\\ */
 
@@ -9240,49 +9308,16 @@ BOOL (psdSetForcedBinding)(STRPTR owner asm("a2"), STRPTR devid asm("a0"), STRPT
 /* \\\ */
 
 /* /// "psdGetForcedBinding()" */
+/* The returned name points into the live config: valid only until the
+   config next changes. */
 STRPTR (psdGetForcedBinding)(STRPTR devid asm("a0"), STRPTR ifid asm("a1"), struct PsdBase * ps asm("a6"))
 {
-    struct PsdIFFContext *pic;
-    struct PsdIFFContext *mpic = NULL;
-    ULONG *chunk;
-    STRPTR owner = NULL;
+    STRPTR owner;
 
     pLockSemShared(ps, &ps->ps_ConfigLock);
-    /* Find device config form. It contains all device config data */
-    pic = psdFindCfgForm(NULL, IFFFORM_DEVICECFG);
-    while(pic) {
-        /* Find DEVID-Chunk. Check if it matches our device id */
-        if(pMatchStringChunk(ps, pic, IFFCHNK_DEVID, devid)) {
-            /* We found the correct device. Now if we need to store interface data, find the interface first */
-            if(ifid) {
-                /* Search interface config form */
-                mpic = psdFindCfgForm(pic, IFFFORM_IFCFGDATA);
-                while(mpic) {
-                    /* Found the form. Find the the ID String for the interface */
-                    if(pMatchStringChunk(ps, mpic, IFFCHNK_IFID, ifid)) {
-                        /* ID did match, now check for forced binding */
-                        chunk = pFindCfgChunk(ps, mpic, IFFCHNK_FORCEDBIND);
-                        if(chunk) {
-                            owner = (STRPTR) &chunk[2];
-                            break;
-                        }
-                    }
-                    mpic = psdNextCfgForm(mpic);
-                }
-            } else {
-                /* Search for device forced binding */
-                chunk = pFindCfgChunk(ps, pic, IFFCHNK_FORCEDBIND);
-                if(chunk) {
-                    owner = (STRPTR) &chunk[2];
-                    break;
-                }
-            }
-            break;
-        }
-        pic = psdNextCfgForm(pic);
-    }
+    owner = pFindForcedBinding(ps, devid, ifid);
     pUnlockSem(ps, &ps->ps_ConfigLock);
-    return(owner);
+    return owner;
 }
 /* \\\ */
 
