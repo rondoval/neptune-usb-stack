@@ -673,13 +673,14 @@ struct PsdNotifyGadgets * pGenerateAddBox(struct PsdBase * ps, struct PsdDevice 
     {
         gad[1] = "Change Class Prefs";
     }
-    if(isdead || lowpower)
+    /* port actions only with a port: a root hub has none */
+    if((isdead || lowpower) && pd->pd_Hub)
     {
         gad[0] = "Disable Port";
         methods[0] = MUIM_DevNotify_DisablePort;
         gad[1] = NULL;
     }
-    if(isdead && (!lowpower))
+    if(isdead && (!lowpower) && pd->pd_Hub)
     {
         gad[1] = "Powercycle Port";
         methods[1] = MUIM_DevNotify_PowerCyclePort;
@@ -939,7 +940,11 @@ void pEventHandler(struct PsdBase * ps)
                 }
 
                 pRemoveOldBox(ps, pd);
-                gads[0] = "Disable Port";
+                /* port actions only with a port: a root hub has none */
+                if(pd->pd_Hub)
+                {
+                    gads[0] = "Disable Port";
+                }
                 devname = pd->pd_ProductStr;
                 if(!devname)
                 {
@@ -954,7 +959,10 @@ void pEventHandler(struct PsdBase * ps)
                     body = psdCopyStrFmt("\33bWARNING: Detected LOW POWER situation\33n\n\nfor USB device\n\n\33b%s\33n\n\nand this might cause failures!%s", devname, autodismsg);
                 } else {
                     body = psdCopyStrFmt("\33bWARNING: DEAD DEVICE!\33n\n\nUSB device\n\n\33b%s\33n\n\ndropped dead for no apparent reason!%s", devname, autodismsg);
-                    gads[1] = "Powercycle Port";
+                    if(pd->pd_Hub)
+                    {
+                        gads[1] = "Powercycle Port";
+                    }
                 }
                 pog = pAllocNotifyGadgets(ps, body, gads);
                 psdFreeVec(body);
@@ -970,8 +978,11 @@ void pEventHandler(struct PsdBase * ps)
                 } else {
                     pog->pog_Device = pd;
                 }
-                DoMethod(pog->pog_GadgetObj[0], MUIM_Notify, MUIA_Pressed, FALSE,
-                         ntf->nt_AppObj, 5, MUIM_Application_PushMethod, ntf->nt_NotifyObj, 2, MUIM_DevNotify_DisablePort, pog);
+                if(gads[0])
+                {
+                    DoMethod(pog->pog_GadgetObj[0], MUIM_Notify, MUIA_Pressed, FALSE,
+                             ntf->nt_AppObj, 5, MUIM_Application_PushMethod, ntf->nt_NotifyObj, 2, MUIM_DevNotify_DisablePort, pog);
+                }
                 if(gads[1])
                 {
                     DoMethod(pog->pog_GadgetObj[1], MUIM_Notify, MUIA_Pressed, FALSE,
@@ -1544,7 +1555,7 @@ IPTR DevNotifyDispatcher(struct IClass * cl asm("a0"), Object * obj asm("a2"), M
             if(pIsDeviceStillValid(ps, pd))
             {
                 struct PsdDevice *hubpd = pd->pd_Hub;
-                if(hubpd->pd_DevBinding)
+                if(hubpd && hubpd->pd_DevBinding) /* a root hub has no parent port */
                 {
                     UsbClsBase = hubpd->pd_ClsBinding->puc_ClassBase;
                     if(pIsClassStillValid(ps, UsbClsBase))
