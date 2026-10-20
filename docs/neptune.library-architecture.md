@@ -107,10 +107,10 @@ the library adds no USB state on its own (§5.1).
 | **Locks** | Reader/writer locks with lock borrowing | `PsdLockSem`, `pLockSemExcl`, `pLockSemShared`, `pUnlockSem`, `psdBorrowLocksWait` |
 | **Settings** | IFF tree; load, save, import, apply; class and device settings | `PsdIFFContext`, `psdLoadCfgFromDisk`, `pMigrateCfg`, `psdParseCfg`, `psdSetClsCfg`, `psdSetUsbDevCfg`, `pCheckCfgChanged` |
 | **Events** | Subscriber list and broadcast | `psdAddEventHandler`, `psdSendEvent` |
-| **Event task** | Blocking housekeeping: settings change, link power, stall recovery, idle suspend, notifier start | `pEventHandlerTask`, `pStallRecoverySweep`, `pLinkPowerSweep`, `pIdleSuspendSweep` |
+| **Event task** | Blocking housekeeping: settings change, link power, stall recovery, idle suspend, automatic port recovery, notifier start | `pEventHandlerTask`, `pStallRecoverySweep`, `pLinkPowerSweep`, `pIdleSuspendSweep`, `pAutoRecover` |
 | **Power** | Suspend and resume, link power, power budget | `psdSuspendDevice`, `psdResumeDevice`, `psdSuspendBindings`, `psdResumeBindings`, `pLinkPowerArm`, `pSuspendRefusal`, `psdCalculatePower` |
 | **Device services** | Reset without teardown, safe eject | `psdResetDevice`, `psdSafeEjectDevice` |
-| **Notifier** | Popups, sounds, automatic port recovery of dead and overdrawn devices | `pNotifyGUITask` (`notify.gui.c`) |
+| **Notifier** | Popups and sounds; reports the automatic port recovery | `pNotifyGUITask` (`notify.gui.c`) |
 
 **The device model.** Each controller keeps a **flat** list of all its devices, whatever their
 depth; the tree comes from each device's parent hub and port. A device holds its configurations,
@@ -135,8 +135,8 @@ inactive ones hang off it.
 | Task | Count | Spawned by | Waits on | Does |
 |---|---|---|---|---|
 | **Relay task** `pDeviceTask` | one per HCD unit | `psdAddHardware` | inbound port, completion port, CTRL-C | Opens the HCD, selects the backend, forwards message-framed requests and aborts, routes their replies, flushes at shutdown |
-| **Event task** `pEventHandlerTask` | one | first `libOpen` | event port, a 500 ms timer, CTRL-C | Settings-change detection, the stall-recovery, link power and idle suspend sweeps, starting the notifier |
-| **Notifier** `pNotifyGUITask` | at most one | event task | MUI, event port, timer | Popups, sounds, port recovery (§5.13) |
+| **Event task** `pEventHandlerTask` | one | first `libOpen` | event port, a 500 ms timer, CTRL-C | Settings-change detection, the stall-recovery, link power and idle suspend sweeps, automatic port recovery, starting the notifier |
+| **Notifier** `pNotifyGUITask` | at most one | event task | MUI, event port, timer | Popups, sounds (§5.13) |
 | **Class tasks** | any | classes, via `psdSpawnSubTask` | their own | Hub tasks, binding workers, GUIs |
 | **Caller tasks** | any | - | - | Most of the library: enumeration (in hub tasks), transfers, class scan, settings, suspend |
 
@@ -411,7 +411,8 @@ flowchart TD
   most, NAK timeouts less, CRC, transaction and split errors least, anything else halves the count.
   Past a threshold - lower once the device has an address or descriptor - the device is flagged
   dead and `EHMB_DEVICEDEAD` sent once; the flag clears when the count decays to zero on a connected
-  device. Recovery is the notifier's (§5.13).
+  device. Aborts are not scored: neither the shadow message (`pWaitPipeUnscored`) nor the aborted
+  transfer's `IOERR_ABORTED`. Recovery is the event task's (§5.13).
 - **Abort follows the framing** (rule 4): a shadow message to the relay task, which calls `AbortIO`,
   or the HCD's abort entry for a direct submit. The completion still arrives through the funnel.
 - **Guards.** On a disconnected device `psdDoPipe` returns `UHIOERR_TIMEOUT` after a short delay
@@ -436,7 +437,8 @@ allocation only warns and leaves one ring (rule 16).
 pulls and pushes the data through them on its own clock, without pipes. It needs `UHCF_RT_ISO` and,
 on a context backend, the iso-hook ops, onto which the commands are re-keyed together with the
 handler's flags such as `RTA_ReportInErrors` (ABI doc §10.3). A running stream holds the device
-busy from `psdStartRTIso` to `psdStopRTIso`, since its data never passes a pipe that could stamp
+busy from `psdStartRTIso` to `psdStopRTIso`, or to `psdFreeRTIsoHandler` if it was never stopped -
+one hold per stream (`prt_Running`) - since its data never passes a pipe that could stamp
 activity. On unplug each handler's release hook runs before the bindings are released.
 
 ### 5.8 Stall recovery
@@ -585,17 +587,29 @@ flowchart TD
 
 **Events.** A subscriber registers a port and a mask (`psdAddEventHandler`); `psdSendEvent` puts a
 note to each matching port. Replies go to a `PA_IGNORE` port and are freed lazily at the next send.
-The fifteen event types cover hardware, devices, classes, bindings and error messages being added
-or removed, settings changes, and a device turning dead, low-power, suspended or resumed. The
-hardware- and class-removal events are sent after the object is freed: their parameter is an
-address for identity only.
+The sixteen event types cover hardware, devices, classes, bindings and error messages being added
+or removed, settings changes, a device turning dead, low-power, suspended or resumed, and the
+stack's handling of a dead or overdrawn one (`EHMB_DEVRECOVERY`). The
+hardware-, device- and class-removal events are sent just before the object is freed, so it is
+gone by the time a note is read: their parameter is an address for identity only (`neptune.h`).
+
+**Automatic recovery** runs in the event task, on `EHMB_DEVICEDEAD` and `EHMB_DEVICELOWPW`, so it
+works with popups off, before Workbench and on a ROM boot (`pAutoRecover`). A dead device with
+`pgc_AutoRestartDead` has its port power-cycled (`UCM_HubPowerCyclePort` to the parent hub's class);
+otherwise `pgc_AutoDisableDead` and `pgc_AutoDisableLP` disable the port (`UCM_HubDisablePort`). A
+root hub has no port and is left alone (`pAutoRecoverAction`). Every such device then gets one
+`EHMB_DEVRECOVERY` note with the outcome - `EHRA_POWERCYCLE`, `EHRA_DISABLE`, or `EHRA_NONE` when
+nothing was done - the state and the product name, copied into the note (`struct PsdDevRecovery`,
+valid until the note is replied; `pSendEventWithData`). All of it runs under the PBase read lock, which
+`psdFreeDevice` needs for writing, so the device stays valid meanwhile and the note is queued before
+the hub task can free it; the device parameter is for identity only.
 
 **The notifier** runs when at least one popup kind is enabled and a Workbench screen exists; it
 needs MUI and datatypes, and exits when the last popup kind is switched off. It shows popups with
-per-device actions, plays the attach and detach sounds, and runs the **automatic recovery**: a dead
-device with `pgc_AutoRestartDead` has its port power-cycled (`UCM_HubPowerCyclePort` to the parent
-hub's class); otherwise `pgc_AutoDisableDead` and `pgc_AutoDisableLP` disable the port
-(`UCM_HubDisablePort`). This policy lives in the GUI task, not in the core (rule 17).
+per-device actions and plays the attach and detach sounds. It takes dead and overdrawn devices
+from `EHMB_DEVRECOVERY` alone, so each gets one popup, built from the note: a recovered device's
+says what was done, has no port buttons and outlives the device; one left alone offers Disable
+and Power-cycle Port, if it has a port.
 
 ### 5.14 Teardown
 
@@ -672,9 +686,10 @@ Each rule exists because breaking it caused, or would cause, a real failure.
     tokens and stream counts, or the next allocation trusts phantom rings. Link power disarm
     withholds the capability facts as well as the enables, because the HCD evaluates LTM and USB 2
     hardware LPM from the facts alone.
-17. **The core flags; it does not heal.** Dead and low-power devices are flagged and announced; port
-    recovery happens only while the notifier runs. Shutdown likewise gives up rather than hang: the
-    relay drain and the removal of devices with open pipes both end after a bounded wait.
+17. **The core flags and heals by policy; the notifier only reports.** Dead and low-power devices
+    are flagged and announced, and the event task applies the configured port recovery whether or
+    not the notifier runs. Shutdown gives up rather than hang: the relay drain and the removal of
+    devices with open pipes both end after a bounded wait.
 18. **The custom lock wakes every waiter on every full release.** A waiter may already hold a shared
     lock on the same lock; waking only at count zero hangs it.
 
