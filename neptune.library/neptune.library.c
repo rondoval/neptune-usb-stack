@@ -8508,7 +8508,9 @@ struct PsdIFFContext * (psdAllocCfgForm)(ULONG formid asm("d0"), struct PsdBase 
 /* \\\ */
 
 /* /// "psdRemCfgForm()" */
-void (psdRemCfgForm)(struct PsdIFFContext * pic asm("a0"), struct PsdBase * ps asm("a6"))
+/* The sfd declares BOOL: always TRUE, so a caller testing D0 reads a defined
+   value */
+BOOL (psdRemCfgForm)(struct PsdIFFContext * pic asm("a0"), struct PsdBase * ps asm("a6"))
 {
     KPRINTF(10, ("psdRemCfgForm(0x%08lx)\n", pic));
 
@@ -8517,12 +8519,13 @@ void (psdRemCfgForm)(struct PsdIFFContext * pic asm("a0"), struct PsdBase * ps a
         pic = (struct PsdIFFContext *) ps->ps_ConfigRoot.lh_Head;
         if(!(pic->pic_Node.ln_Succ)) {
             pUnlockSem(ps, &ps->ps_ConfigLock);
-            return;
+            return TRUE;
         }
     }
     pFreeForm(ps, pic);
     pUnlockSem(ps, &ps->ps_ConfigLock);
     ps->ps_CheckConfigReq = TRUE;
+    return TRUE;
 }
 /* \\\ */
 
