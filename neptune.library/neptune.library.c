@@ -5244,11 +5244,9 @@ BOOL (psdResetDevice)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm("
     }
     psdUnlockDevice(pd);
 
-    if(res) {
-        /* the reset cleared U1/U2/LTM arming on the device - ask for a fresh
-           link-power sweep (event handler task, non-blocking) */
-        ps->ps_LinkPowerReq = TRUE;
-    } else {
+    /* the U1/U2/LTM arming the reset cleared is restored by psdSetDeviceConfig()
+       above (pLinkPowerArm) */
+    if(!res) {
         psdAddErrorMsg(RETURN_ERROR, (STRPTR) libname,
                        "Restoring configuration of '%s' after reset failed.",
                        pd->pd_ProductStr);
