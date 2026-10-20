@@ -7436,6 +7436,25 @@ void (psdRemErrorMsg)(struct PsdErrorMsg * pem asm("a0"), struct PsdBase * ps as
 
 /* *** Bindings *** */
 
+/* /// "pFindIfBinding()" */
+/* The first interface of any configuration of pd that puc is bound to, or
+   NULL. The caller holds the PBase lock. */
+static struct PsdInterface * pFindIfBinding(struct PsdDevice *pd, struct PsdUsbClass *puc)
+{
+    struct PsdConfig *pc;
+    struct PsdInterface *pif;
+
+    ForeachNode(&pd->pd_Configs, pc) {
+        ForeachNode(&pc->pc_Interfaces, pif) {
+            if(pif->pif_IfBinding && (pif->pif_ClsBinding == puc)) {
+                return pif;
+            }
+        }
+    }
+    return NULL;
+}
+/* \\\ */
+
 /* /// "pReleaseAfterDOSBindings()" */
 /*
  * Called the first time a class scan happens from a process after the stack
@@ -7461,12 +7480,13 @@ static void pReleaseAfterDOSBindings(struct PsdBase *ps)
 
         if(restartme && puc->puc_UseCnt) {
             struct PsdDevice *pd;
-            struct PsdConfig *pc;
-            struct PsdInterface *pif;
 
-            /* Well, try to release the open bindings in a best effort attempt */
+            /* Well, try to release the open bindings in a best effort attempt.
+               Each release drops the lock, so the walk starts over after it. */
             pd = NULL;
             while((pd = psdGetNextDevice(pd))) {
+                struct PsdInterface *pif;
+
                 if(pd->pd_DevBinding && (pd->pd_ClsBinding == puc) && (!(pd->pd_Flags & PDFF_APPBINDING))) {
                     psdUnlockPBase();
                     psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
@@ -7477,19 +7497,14 @@ static void pReleaseAfterDOSBindings(struct PsdBase *ps)
                     pd = NULL; /* restart */
                     continue;
                 }
-                ForeachNode(&pd->pd_Configs, pc) {
-                    ForeachNode(&pc->pc_Interfaces, pif) {
-                        if(pif->pif_IfBinding && (pif->pif_ClsBinding == puc)) {
-                            psdUnlockPBase();
-                            psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
-                                           "AfterDOS: Temporarily releasing %s %s binding to %s.",
-                                           puc->puc_ClassName, "interface", pd->pd_ProductStr);
-                            psdReleaseIfBinding(pif);
-                            psdLockReadPBase();
-                            pd = NULL; /* restart */
-                            continue;
-                        }
-                    }
+                if((pif = pFindIfBinding(pd, puc))) {
+                    psdUnlockPBase();
+                    psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
+                                   "AfterDOS: Temporarily releasing %s %s binding to %s.",
+                                   puc->puc_ClassName, "interface", pd->pd_ProductStr);
+                    psdReleaseIfBinding(pif);
+                    psdLockReadPBase();
+                    pd = NULL; /* restart */
                 }
             }
         }
