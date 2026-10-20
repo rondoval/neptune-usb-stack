@@ -6335,6 +6335,42 @@ void (psdSendPipe)(struct PsdPipe * pp asm("a1"), APTR data asm("a0"), ULONG len
 }
 /* \\\ */
 
+/* /// "pWaitPipeUnscored()" */
+/* Wait for one pipe's reply and dequeue it; returns its io_Error. No dead
+   scoring: psdAbortPipe() collects its shadow message here, whose success
+   says nothing about the device. */
+static LONG pWaitPipeUnscored(struct PsdPipe *pp)
+{
+    ULONG sigs = 0;
+    KPRINTF(5, ("pWaitPipeUnscored(0x%08lx)\n", pp));
+    while(pp->pp_Msg.mn_Node.ln_Type == NT_MESSAGE) {
+        KPRINTF(5, ("ln_Type = %02lx\n", pp->pp_Msg.mn_Node.ln_Type));
+        sigs |= Wait(1L<<pp->pp_MsgPort->mp_SigBit);
+        KPRINTF(5, ("sigs = 0x%08lx\n", sigs));
+    }
+    Forbid();
+    if(pp->pp_Msg.mn_Node.ln_Type == NT_REPLYMSG) {
+        /* NT_REPLYMSG does not mean "still queued here": ReplyMsg() sets it and
+           GetMsg() is documented only to unlink, so a pipe a class
+           reaped itself (bootkeyboard, lan78xx, camdusbmidi do) looks identical.
+           A blind Remove() here would relink stale neighbours. */
+        struct Node *n = pp->pp_MsgPort->mp_MsgList.lh_Head;
+        while(n->ln_Succ) {
+            if(n == &pp->pp_Msg.mn_Node) {
+                Remove(n);
+                break;
+            }
+            n = n->ln_Succ;
+        }
+        pp->pp_Msg.mn_Node.ln_Type = NT_FREEMSG;
+    }
+    /* avoid signals getting lost for other messages arriving */
+    SetSignal(sigs, sigs);
+    Permit();
+    return pp->pp_IOReq.iouh_Req.io_Error;
+}
+/* \\\ */
+
 /* /// "psdAbortPipe()" */
 void (psdAbortPipe)(struct PsdPipe * pp asm("a1"), struct PsdBase * ps asm("a6"))
 {
@@ -6365,7 +6401,7 @@ void (psdAbortPipe)(struct PsdPipe * pp asm("a1"), struct PsdBase * ps asm("a6")
 
         npp->pp_AbortPipe = pp;
         PutMsg(&pp->pp_Device->pd_Hardware->phw_TaskMsgPort, &npp->pp_Msg);
-        psdWaitPipe(npp);
+        pWaitPipeUnscored(npp);   /* not psdWaitPipe(): the shadow must not score */
         psdFreeVec(npp);
     }
 }
@@ -6378,35 +6414,9 @@ void (psdAbortPipe)(struct PsdPipe * pp asm("a1"), struct PsdBase * ps asm("a6")
    (pCtxDoOp), which never calls pActivityBegin(), waits here like anyone else. */
 LONG (psdWaitPipe)(struct PsdPipe * pp asm("a1"), struct PsdBase * ps asm("a6"))
 {
-    ULONG sigs = 0;
     struct PsdDevice *pd = pp->pp_Device;
-    LONG ioerr;
-    KPRINTF(5, ("psdWaitPipe(0x%08lx)\n", pp));
-    while(pp->pp_Msg.mn_Node.ln_Type == NT_MESSAGE) {
-        KPRINTF(5, ("ln_Type = %02lx\n", pp->pp_Msg.mn_Node.ln_Type));
-        sigs |= Wait(1L<<pp->pp_MsgPort->mp_SigBit);
-        KPRINTF(5, ("sigs = 0x%08lx\n", sigs));
-    }
-    Forbid();
-    if(pp->pp_Msg.mn_Node.ln_Type == NT_REPLYMSG) {
-        /* NT_REPLYMSG does not mean "still queued here": ReplyMsg() sets it and
-           GetMsg() is documented only to unlink, so a pipe a class
-           reaped itself (bootkeyboard, lan78xx, camdusbmidi do) looks identical.
-           A blind Remove() here would relink stale neighbours. */
-        struct Node *n = pp->pp_MsgPort->mp_MsgList.lh_Head;
-        while(n->ln_Succ) {
-            if(n == &pp->pp_Msg.mn_Node) {
-                Remove(n);
-                break;
-            }
-            n = n->ln_Succ;
-        }
-        pp->pp_Msg.mn_Node.ln_Type = NT_FREEMSG;
-    }
-    /* avoid signals getting lost for other messages arriving */
-    SetSignal(sigs, sigs);
-    Permit();
-    ioerr = pp->pp_IOReq.iouh_Req.io_Error;
+    LONG ioerr = pWaitPipeUnscored(pp);
+
     switch(ioerr) {
     case UHIOERR_TIMEOUT:
         pd->pd_DeadCount++;
@@ -6418,6 +6428,8 @@ LONG (psdWaitPipe)(struct PsdPipe * pp asm("a1"), struct PsdBase * ps asm("a6"))
     case UHIOERR_XACTERROR:     /* context ABI: a failed transaction, like CRC */
     case UHIOERR_SPLITERROR:
         pd->pd_DeadCount++;
+        break;
+    case IOERR_ABORTED:         /* cancelled by its owner: says nothing about the device */
         break;
     case UHIOERR_RUNTPACKET:
     default:
