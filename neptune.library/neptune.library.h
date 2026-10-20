@@ -118,6 +118,9 @@ void pReleaseBinding(struct PsdBase *ps, struct PsdDevice *pd, struct PsdInterfa
 void pReleaseDevBinding(struct PsdBase *ps, struct PsdDevice *pd);
 void pReleaseIfBinding(struct PsdBase *ps, struct PsdInterface *pif);
 
+BOOL pIsDeviceStillValid(struct PsdBase *ps, struct PsdDevice *pd);
+BOOL pIsClassStillValid(struct PsdBase *ps, struct Library *ucb);
+
 void pGarbageCollectEvents(struct PsdBase *ps);
 BOOL pStartEventHandler(struct PsdBase *ps);
 

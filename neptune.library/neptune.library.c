@@ -8125,8 +8125,11 @@ void (psdRemEventHandler)(struct PsdEventHook * peh asm("a0"), struct PsdBase * 
 }
 /* \\\ */
 
-/* /// "psdSendEvent()" */
-void (psdSendEvent)(ULONG ehmt asm("d0"), APTR param1 asm("a0"), APTR param2 asm("a1"), struct PsdBase * ps asm("a6"))
+/* /// "pSendEventWithData()" */
+/* psdSendEvent(). With data, each note carries its own copy of len bytes of
+   it, behind the note in the same allocation, and Param2 points at that
+   copy: it lives exactly as long as the note. */
+static void pSendEventWithData(struct PsdBase *ps, ULONG ehmt, APTR param1, APTR param2, CONST_APTR data, ULONG len)
 {
     struct PsdEventNote *pen;
     struct PsdEventHook *peh;
@@ -8139,18 +8142,29 @@ void (psdSendEvent)(ULONG ehmt asm("d0"), APTR param1 asm("a0"), APTR param2 asm
     peh = (struct PsdEventHook *) ps->ps_EventHooks.lh_Head;
     while(peh->peh_Node.ln_Succ) {
         if(peh->peh_MsgMask & msgmask) {
-            if((pen = psdAllocVec(sizeof(struct PsdEventNote)))) {
+            if((pen = psdAllocVec(sizeof(struct PsdEventNote) + len))) {
                 pen->pen_Msg.mn_ReplyPort = &ps->ps_EventReplyPort;
                 pen->pen_Msg.mn_Length = sizeof(struct PsdEventNote);
                 pen->pen_Event = ehmt;
                 pen->pen_Param1 = param1;
                 pen->pen_Param2 = param2;
+                if(data) {
+                    pen->pen_Param2 = pen + 1;
+                    CopyMem((APTR) data, pen->pen_Param2, len);
+                }
                 PutMsg(peh->peh_MsgPort, &pen->pen_Msg);
             }
         }
         peh = (struct PsdEventHook *) peh->peh_Node.ln_Succ;
     }
     ReleaseSemaphore(&ps->ps_ReentrantLock);
+}
+/* \\\ */
+
+/* /// "psdSendEvent()" */
+void (psdSendEvent)(ULONG ehmt asm("d0"), APTR param1 asm("a0"), APTR param2 asm("a1"), struct PsdBase * ps asm("a6"))
+{
+    pSendEventWithData(ps, ehmt, param1, param2, NULL, 0);
 }
 /* \\\ */
 
@@ -10823,6 +10837,105 @@ static void pIdleSuspendSweep(struct PsdBase *ps)
 }
 /* \\\ */
 
+/* /// "pIsDeviceStillValid()" */
+/* Is pd still one of the stack's devices? For a pointer kept across a wait
+   (an event note, a popup). */
+BOOL pIsDeviceStillValid(struct PsdBase *ps, struct PsdDevice *pd)
+{
+    struct PsdDevice *tmppd = NULL;
+
+    while((tmppd = psdGetNextDevice(tmppd))) {
+        if(tmppd == pd) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+/* \\\ */
+
+/* /// "pIsClassStillValid()" */
+/* Is ucb still the base of a loaded class? */
+BOOL pIsClassStillValid(struct PsdBase *ps, struct Library *ucb)
+{
+    struct PsdUsbClass *puc = (struct PsdUsbClass *) ps->ps_Classes.lh_Head;
+
+    while(puc->puc_Node.ln_Succ) {
+        if(puc->puc_ClassBase == ucb) {
+            return TRUE;
+        }
+        puc = (struct PsdUsbClass *) puc->puc_Node.ln_Succ;
+    }
+    return FALSE;
+}
+/* \\\ */
+
+/* /// "pAutoRecoverAction()" */
+/* What the stack settings ask for a dead or overdrawn device: EHRA_POWERCYCLE,
+   EHRA_DISABLE or EHRA_NONE. EHRA_NONE also without a bound parent hub to do
+   it - a root hub has no port. */
+static ULONG pAutoRecoverAction(struct PsdBase *ps, struct PsdDevice *pd)
+{
+    struct PsdGlobalCfg *pgc = ps->ps_GlobalCfg;
+    BOOL isdead = (pd->pd_Flags & PDFF_DEAD) ? TRUE : FALSE;
+    BOOL lowpower = (pd->pd_Flags & PDFF_LOWPOWER) ? TRUE : FALSE;
+
+    if(!(pd->pd_Hub && pd->pd_Hub->pd_DevBinding)) {
+        return EHRA_NONE;
+    }
+    if(isdead && pgc->pgc_AutoRestartDead) {
+        return EHRA_POWERCYCLE;
+    }
+    if((isdead && pgc->pgc_AutoDisableDead) || (lowpower && pgc->pgc_AutoDisableLP)) {
+        return EHRA_DISABLE;
+    }
+    return EHRA_NONE;
+}
+/* \\\ */
+
+/* /// "pAutoRecover()" */
+/* Handle a device an EHMB_DEVICEDEAD or EHMB_DEVICELOWPW note names: apply
+   pAutoRecoverAction() and report the outcome, EHRA_NONE included, as one
+   EHMB_DEVRECOVERY note carrying everything a listener shows - the device
+   may be gone by the time it is read. Runs in the event task, so recovery
+   works whether or not the notifier does. Under the PBase read lock: the
+   device cannot be unlinked meanwhile (psdFreeDevice needs the write lock),
+   so it stays valid here, and the note is queued before the hub task can
+   free it. */
+static void pAutoRecover(struct PsdBase *ps, struct PsdDevice *pd)
+{
+    psdLockReadPBase();
+    if(pIsDeviceStillValid(ps, pd) && (pd->pd_Flags & (PDFF_DEAD|PDFF_LOWPOWER))) {
+        STRPTR name = pd->pd_ProductStr ? pd->pd_ProductStr : (STRPTR) "";
+        ULONG len = sizeof(struct PsdDevRecovery) + strlen(name);
+        struct PsdDevRecovery *pdr = psdAllocVec(len);
+        ULONG action = pAutoRecoverAction(ps, pd);
+        struct PsdUsbClass *puc = action ? pd->pd_Hub->pd_ClsBinding : NULL;
+
+        if(action && !(puc && pIsClassStillValid(ps, puc->puc_ClassBase) &&
+                       usbDoMethod((action == EHRA_POWERCYCLE) ? UCM_HubPowerCyclePort : UCM_HubDisablePort,
+                                   pd->pd_Hub, pd->pd_HubPort))) {
+            action = EHRA_NONE; /* the hub class did not take it */
+        }
+        if(action) {
+            psdAddErrorMsg(RETURN_WARN, (STRPTR) libname,
+                           (action == EHRA_POWERCYCLE)
+                           ? "Automatically powercycling port for '%s' due to death event."
+                           : "Automatically disabling port for '%s' due lowpower/death event.",
+                           pd->pd_ProductStr);
+        }
+        if(pdr) {
+            pdr->pdr_Action = action;
+            pdr->pdr_Flags = ((pd->pd_Flags & PDFF_DEAD) ? PDRF_DEAD : 0) |
+                             ((pd->pd_Flags & PDFF_LOWPOWER) ? PDRF_LOWPOWER : 0);
+            strcpy((STRPTR) pdr->pdr_ProductName, name);
+            pSendEventWithData(ps, EHMB_DEVRECOVERY, pd, NULL, pdr, len);
+            psdFreeVec(pdr);
+        }
+    }
+    psdUnlockPBase();
+}
+/* \\\ */
+
 /* /// "pEventHandlerTask()" */
 void pEventHandlerTask()
 {
@@ -10849,7 +10962,7 @@ void pEventHandlerTask()
                     ph->ph_TimerIOReq->tr_node.io_Message.mn_Node.ln_Name = "EventHandler";
                     ph->ph_TimerIOReq->tr_node.io_Command = TR_ADDREQUEST;
 
-                    ph->ph_EventHandler = psdAddEventHandler(ph->ph_MsgPort, EHMF_CONFIGCHG);
+                    ph->ph_EventHandler = psdAddEventHandler(ph->ph_MsgPort, EHMF_CONFIGCHG|EHMF_DEVICEDEAD|EHMF_DEVICELOWPW);
                     if(ph->ph_EventHandler) {
                         ph->ph_Task = thistask;
                         Forbid();
@@ -10885,6 +10998,10 @@ void pEventHandlerTask()
                                     }
                                     break;
 
+                                case EHMB_DEVICEDEAD:
+                                case EHMB_DEVICELOWPW:
+                                    pAutoRecover(ps, (struct PsdDevice *) pen->pen_Param1);
+                                    break;
                                 }
                                 ReplyMsg(&pen->pen_Msg);
                             }

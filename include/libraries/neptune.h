@@ -346,6 +346,20 @@
 #define EHMB_DEVICELOWPW  0x0d /* Param1 = pd */
 #define EHMB_DEVSUSPENDED 0x0e /* Param1 = pd */
 #define EHMB_DEVRESUMED   0x0f /* Param1 = pd */
+#define EHMB_DEVRECOVERY  0x10 /* Param1 = pd, identity only; Param2 = struct PsdDevRecovery * */
+
+/* EHMB_DEVRECOVERY is sent once for every dead or overdrawn device the stack
+   handles (after EHMB_DEVICEDEAD / EHMB_DEVICELOWPW): what it did about it,
+   as the hub is told - so the device may be gone when the note is read.
+   pdr_Action follows GCA_AutoRestartDead, GCA_AutoDisableDead and
+   GCA_AutoDisableLP; EHRA_NONE when they ask for nothing or the device has no
+   parent hub (a root hub). */
+#define EHRA_NONE         0 /* nothing done: the device needs attention */
+#define EHRA_POWERCYCLE   1 /* port power-cycled */
+#define EHRA_DISABLE      2 /* port disabled */
+
+#define PDRF_DEAD         0x0001 /* the device stopped responding */
+#define PDRF_LOWPOWER     0x0002 /* the device draws more than its port supplies */
 
 #define EHMF_ADDHARDWARE  (1L<<EHMB_ADDHARDWARE)
 #define EHMF_REMHARDWARE  (1L<<EHMB_REMHARDWARE)
@@ -362,6 +376,7 @@
 #define EHMF_DEVICELOWPW  (1L<<EHMB_DEVICELOWPW)
 #define EHMF_DEVSUSPENDED (1L<<EHMB_DEVSUSPENDED)
 #define EHMF_DEVRESUMED   (1L<<EHMB_DEVRESUMED)
+#define EHMF_DEVRECOVERY  (1L<<EHMB_DEVRECOVERY)
 
 /* Configuration stuff */
 
@@ -548,6 +563,15 @@ struct PsdNotifyCfg
     /* APPEND ONLY - same min(saved, current) merge rule as PsdGlobalCfg above.
        Both new fields are deliberately zero-valued by default, so an existing
        per-device chunk needs no migration. */
+};
+
+/* Param2 of EHMB_DEVRECOVERY. It is part of the note: valid until the note
+   is replied, and copied by whoever needs it longer. */
+struct PsdDevRecovery
+{
+    ULONG pdr_Action;                     /* EHRA_* */
+    UWORD pdr_Flags;                      /* PDRF_*: what was wrong with the device */
+    UBYTE pdr_ProductName[2];             /* its product name, NUL-terminated, as long as it needs */
 };
 
 #if defined(__GNUC__)

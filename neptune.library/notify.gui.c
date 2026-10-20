@@ -127,7 +127,7 @@ void pNotifyGUITask()
         return;
     }
 
-    ntf->nt_EventHandler = psdAddEventHandler(ntf->nt_MsgPort, EHMF_ADDDEVICE|EHMF_REMDEVICE|EHMF_ADDBINDING|EHMF_CONFIGCHG|EHMF_DEVICEDEAD|EHMF_DEVICELOWPW);
+    ntf->nt_EventHandler = psdAddEventHandler(ntf->nt_MsgPort, EHMF_ADDDEVICE|EHMF_REMDEVICE|EHMF_ADDBINDING|EHMF_CONFIGCHG|EHMF_DEVRECOVERY);
     if(!ntf->nt_EventHandler)
     {
         KPRINTF(10, ("Couldn't add EventHandler.\n"));
@@ -542,37 +542,6 @@ void pNotifyFreeSound(struct PsdBase * ps, struct PsdNotifySound *pps)
 }
 /* \\\ */
 
-/* /// "pIsDeviceStillValid()" */
-BOOL pIsDeviceStillValid(struct PsdBase * ps, struct PsdDevice *pd)
-{
-    struct PsdDevice *tmppd = NULL;
-    while((tmppd = psdGetNextDevice(tmppd)))
-    {
-        if(tmppd == pd)
-        {
-            return(TRUE);
-        }
-    }
-    return(FALSE);
-}
-/* \\\ */
-
-/* /// "pIsClassStillValid()" */
-BOOL pIsClassStillValid(struct PsdBase * ps, struct Library *ucb)
-{
-    struct PsdUsbClass *puc = (struct PsdUsbClass *) ps->ps_Classes.lh_Head;
-    while(puc->puc_Node.ln_Succ)
-    {
-        if(puc->puc_ClassBase == ucb)
-        {
-            return(TRUE);
-        }
-        puc = (struct PsdUsbClass *) puc->puc_Node.ln_Succ;
-    }
-    return(FALSE);
-}
-/* \\\ */
-
 /* /// "pRemoveOldBox()" */
 void pRemoveOldBox(struct PsdBase * ps, struct PsdDevice *pd)
 {
@@ -875,60 +844,25 @@ void pEventHandler(struct PsdBase * ps)
                 break;
             }
 
-            case EHMB_DEVICEDEAD:
-            case EHMB_DEVICELOWPW:
+            case EHMB_DEVRECOVERY:
             {
-                BOOL lowpower = FALSE;
-                BOOL isdead = FALSE;
-                BOOL autodis = FALSE;
+                /* One note per dead or overdrawn device, after the stack has
+                   handled it (pAutoRecover). It carries what the popup shows:
+                   the device may be gone already, so pd is used for identity,
+                   and for the port buttons only while it is still there. */
+                struct PsdDevRecovery *pdr = (struct PsdDevRecovery *) pen->pen_Param2;
+                BOOL lowpower = (pdr->pdr_Flags & PDRF_LOWPOWER) ? TRUE : FALSE;
+                BOOL isdead = (pdr->pdr_Flags & PDRF_DEAD) ? TRUE : FALSE;
+                BOOL present;
                 STRPTR body;
                 STRPTR devname;
+                STRPTR state;
+                STRPTR done = "";
                 STRPTR gads[4] = { NULL, NULL, NULL, "Ignore" };
-                STRPTR autodismsg = "";
 
                 pd = (struct PsdDevice *) pen->pen_Param1;
-                if(!pIsDeviceStillValid(ps, pd))
-                {
-                    break;
-                }
-                lowpower = pd->pd_Flags & PDFF_LOWPOWER;
-                isdead = pd->pd_Flags & PDFF_DEAD;
-                if(!(lowpower || isdead))
-                {
-                    break;
-                }
-                if((ps->ps_GlobalCfg->pgc_AutoDisableLP && lowpower) ||
-                   (ps->ps_GlobalCfg->pgc_AutoDisableDead && isdead) ||
-                   (ps->ps_GlobalCfg->pgc_AutoRestartDead && isdead))
-                {
-                    struct Library *UsbClsBase;
-                    struct PsdDevice *hubpd = pd->pd_Hub;
-                    Forbid();
-                    if(hubpd->pd_DevBinding)
-                    {
-                        UsbClsBase = hubpd->pd_ClsBinding->puc_ClassBase;
-                        if(pIsClassStillValid(ps, UsbClsBase))
-                        {
-                            if(ps->ps_GlobalCfg->pgc_AutoRestartDead && isdead)
-                            {
-                                usbDoMethod((ULONG) UCM_HubPowerCyclePort, hubpd, pd->pd_HubPort);
-                                psdAddErrorMsg(RETURN_WARN, ps->ps_Library.lib_Node.ln_Name,
-                                               "Automatically powercycling port for '%s' due to death event.",
-                                               pd->pd_ProductStr);
-                                autodismsg = "\n\n\33bAutomatically powercycling port!\33n";
-                            } else {
-                                usbDoMethod((ULONG) UCM_HubDisablePort, hubpd, pd->pd_HubPort);
-                                psdAddErrorMsg(RETURN_WARN, ps->ps_Library.lib_Node.ln_Name,
-                                               "Automatically disabling port for '%s' due lowpower/death event.",
-                                               pd->pd_ProductStr);
-                                autodismsg = "\n\n\33bAutomatically disabling port!\33n";
-                            }
-                            autodis = TRUE;
-                        }
-                    }
-                    Permit();
-                }
-                if(pd->pd_NotifyCfg.ntc_InhibitPopup)
+                present = pIsDeviceStillValid(ps, pd);
+                if(present && pd->pd_NotifyCfg.ntc_InhibitPopup)
                 {
                     break;
                 }
@@ -940,30 +874,40 @@ void pEventHandler(struct PsdBase * ps)
                 }
 
                 pRemoveOldBox(ps, pd);
-                /* port actions only with a port: a root hub has none */
-                if(pd->pd_Hub)
-                {
-                    gads[0] = "Disable Port";
-                }
-                devname = pd->pd_ProductStr;
-                if(!devname)
-                {
-                    devname = "(unnamed device)";
-                }
+                devname = pdr->pdr_ProductName[0] ? (STRPTR) pdr->pdr_ProductName : (STRPTR) "(unnamed device)";
                 if(lowpower && isdead)
                 {
-                    body = psdCopyStrFmt("\33bWARNING: Detected LOW POWER situation\33n\n\nfor USB device\n\n\33b%s\33n\n\nand it has \33bdropped dead already\33n!%s", devname, autodismsg);
+                    state = "\33bWARNING: Detected LOW POWER situation\33n\n\nfor USB device\n\n\33b%s\33n\n\nand it has \33bdropped dead already\33n!%s";
                 }
                 else if(lowpower)
                 {
-                    body = psdCopyStrFmt("\33bWARNING: Detected LOW POWER situation\33n\n\nfor USB device\n\n\33b%s\33n\n\nand this might cause failures!%s", devname, autodismsg);
+                    state = "\33bWARNING: Detected LOW POWER situation\33n\n\nfor USB device\n\n\33b%s\33n\n\nand this might cause failures!%s";
                 } else {
-                    body = psdCopyStrFmt("\33bWARNING: DEAD DEVICE!\33n\n\nUSB device\n\n\33b%s\33n\n\ndropped dead for no apparent reason!%s", devname, autodismsg);
-                    if(pd->pd_Hub)
-                    {
-                        gads[1] = "Powercycle Port";
-                    }
+                    state = "\33bWARNING: DEAD DEVICE!\33n\n\nUSB device\n\n\33b%s\33n\n\ndropped dead for no apparent reason!%s";
                 }
+                switch(pdr->pdr_Action)
+                {
+                    case EHRA_POWERCYCLE:
+                        done = "\n\n\33bAutomatically powercycling port!\33n";
+                        break;
+
+                    case EHRA_DISABLE:
+                        done = "\n\n\33bAutomatically disabling port!\33n";
+                        break;
+
+                    default:
+                        /* nothing done: offer it by hand, if there is a port */
+                        if(present && pd->pd_Hub)
+                        {
+                            gads[0] = "Disable Port";
+                            if(isdead && !lowpower)
+                            {
+                                gads[1] = "Powercycle Port";
+                            }
+                        }
+                        break;
+                }
+                body = psdCopyStrFmt(state, devname, done);
                 pog = pAllocNotifyGadgets(ps, body, gads);
                 psdFreeVec(body);
                 if(!pog)
@@ -971,13 +915,8 @@ void pEventHandler(struct PsdBase * ps)
                     break;
                 }
 
-                if(autodis)
-                {
-                    set(pog->pog_GadgetObj[0], MUIA_Disabled, TRUE);
-                    pog->pog_Device = NULL; // to keep the message on the screen
-                } else {
-                    pog->pog_Device = pd;
-                }
+                /* a recovered device's popup outlives the device */
+                pog->pog_Device = (pdr->pdr_Action == EHRA_NONE) ? pd : NULL;
                 if(gads[0])
                 {
                     DoMethod(pog->pog_GadgetObj[0], MUIM_Notify, MUIA_Pressed, FALSE,
