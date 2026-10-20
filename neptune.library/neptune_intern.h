@@ -658,6 +658,7 @@ struct PsdRTIsoHandler
     struct IOUsbHWRTIso prt_RTIso;        /* RT Iso structure (the classic class-facing block) */
     struct USBIsoHooks  prt_IsoHooks;     /* Context backend: the wire hook block (filled from prt_RTIso at marshal; uih_Object = &prt_RTIso keeps class hooks unchanged) */
     UWORD               prt_HookFlags;    /* UHCD_IHF_* for that block (RTA_ReportInErrors) */
+    BOOL                prt_Running;      /* Started: holds one pd_IOBusyCount until stopped or freed */
 };
 
 /* Summary of BOS capabilities for one device */

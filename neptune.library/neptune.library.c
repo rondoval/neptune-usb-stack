@@ -7183,6 +7183,11 @@ void (psdFreeRTIsoHandler)(struct PsdRTIsoHandler * prt asm("a1"), struct PsdBas
     Remove(&prt->prt_Node);
     Permit();
     pp = prt->prt_Pipe;
+    if(prt->prt_Running) {
+        /* freed without psdStopRTIso(): the stream ends with the handler */
+        --pp->pp_Device->pd_IOBusyCount;
+        prt->prt_Running = FALSE;
+    }
     pp->pp_IOReq.iouh_Req.io_Command = UHCMD_REMISOHANDLER;
     pRtIsoForwardCmd(pp, ps);
     psdFreePipe(pp);
@@ -7206,11 +7211,13 @@ LONG (psdStartRTIso)(struct PsdRTIsoHandler * prt asm("a1"), struct PsdBase * ps
     }
     pp->pp_IOReq.iouh_Req.io_Command = UHCMD_STARTRTISO;
     ioerr = pRtIsoForwardCmd(pp, ps);
-    if(!ioerr) {
+    if(!ioerr && !prt->prt_Running) {
         /* not pActivityBegin(): this is a hold for the whole lifetime of the
-           running stream, released by psdStopRTIso(), on top of the pair that
-           pRtIsoForwardCmd() already balanced around the START command itself */
+           running stream, released by psdStopRTIso() or psdFreeRTIsoHandler(),
+           on top of the pair that pRtIsoForwardCmd() already balanced around
+           the START command itself. One per stream, however often started. */
         ++pp->pp_Device->pd_IOBusyCount;
+        prt->prt_Running = TRUE;
     }
     return(ioerr);
 }
@@ -7228,8 +7235,9 @@ LONG (psdStopRTIso)(struct PsdRTIsoHandler * prt asm("a1"), struct PsdBase * ps 
     pp = prt->prt_Pipe;
     pp->pp_IOReq.iouh_Req.io_Command = UHCMD_STOPRTISO;
     ioerr = pRtIsoForwardCmd(pp, ps);
-    if(!ioerr) {
+    if(!ioerr && prt->prt_Running) {
         --pp->pp_Device->pd_IOBusyCount;   /* release psdStartRTIso()'s lifetime hold */
+        prt->prt_Running = FALSE;
     }
     return(ioerr);
 }
