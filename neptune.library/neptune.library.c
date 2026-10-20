@@ -2932,6 +2932,28 @@ static LONG pContextConfigureEndpoints(struct PsdBase *ps, struct PsdPipe *pp, U
         return(UHIOERR_BADPARAMS);
     }
 
+    /* psdHubClassScan moves on to the next configuration when one binds
+       nothing: the HCD drops the previous configuration's endpoints with
+       this configure, so their tokens and stream counts go too. Inactive
+       alternates were already cleared by pContextSetInterface's drop. */
+    for(struct PsdConfig *oldpc = (struct PsdConfig *) pd->pd_Configs.lh_Head;
+        oldpc->pc_Node.ln_Succ;
+        oldpc = (struct PsdConfig *) oldpc->pc_Node.ln_Succ) {
+        if(oldpc == pc) {
+            continue;
+        }
+        for(pif = (struct PsdInterface *) oldpc->pc_Interfaces.lh_Head;
+            pif->pif_Node.ln_Succ;
+            pif = (struct PsdInterface *) pif->pif_Node.ln_Succ) {
+            for(pep = (struct PsdEndpoint *) pif->pif_EPs.lh_Head;
+                pep->pep_Node.ln_Succ;
+                pep = (struct PsdEndpoint *) pep->pep_Node.ln_Succ) {
+                pep->pep_StreamsAlloc = 0;
+                pep->pep_Token = NULL;
+            }
+        }
+    }
+
     /* the currently selected alternate of each interface heads pc_Interfaces */
     for(pif = (struct PsdInterface *) pc->pc_Interfaces.lh_Head;
         pif->pif_Node.ln_Succ;
@@ -2955,11 +2977,9 @@ static LONG pContextConfigureEndpoints(struct PsdBase *ps, struct PsdPipe *pp, U
                    without stream arrays; stale stream bookkeeping here would
                    make pCtxEnsureStreams skip the re-alloc and let stream
                    users run against phantom rings (mirror of the drop path
-                   in pContextSetInterface). Endpoints of a previously active
-                   *other* config are not walked here - nothing selects
-                   between multi-config devices today. The token is rewritten
-                   below only on success; pre-clearing covers the failure
-                   path too. */
+                   in pContextSetInterface); the other configurations were
+                   cleared above. The token is rewritten below only on
+                   success; pre-clearing covers the failure path too. */
                 pep->pep_StreamsAlloc = 0;
                 pep->pep_Token = NULL;
                 pCtxFillEndpointDesc(&eds[cnt++], pif, pep,
