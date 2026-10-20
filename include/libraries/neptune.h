@@ -327,13 +327,16 @@
 #define NTSCCF_SUBCLASS  (1<<25) /* Subclass field is valid */
 #define NTSCCF_PROTO     (1<<26) /* Protocol field is valid */
 
-/* Event Handler stuff */
+/* Event Handler stuff. Notes arrive asynchronously: for EHMB_REMHARDWARE,
+   EHMB_REMDEVICE and EHMB_REMCLASS the object is already freed when the note
+   is read, so Param1 is its former address, to compare against - never
+   dereference it. */
 #define EHMB_ADDHARDWARE  0x01 /* Param1 = phw */
-#define EHMB_REMHARDWARE  0x02 /* Param1 = phw */
+#define EHMB_REMHARDWARE  0x02 /* Param1 = former phw, identity only */
 #define EHMB_ADDDEVICE    0x03 /* Param1 = pd */
-#define EHMB_REMDEVICE    0x04 /* Param1 = pd */
+#define EHMB_REMDEVICE    0x04 /* Param1 = former pd, identity only */
 #define EHMB_ADDCLASS     0x05 /* Param1 = puc */
-#define EHMB_REMCLASS     0x06 /* Param1 = puc */
+#define EHMB_REMCLASS     0x06 /* Param1 = former puc, identity only */
 #define EHMB_ADDBINDING   0x07 /* Param1 = pd */
 #define EHMB_REMBINDING   0x08 /* Param1 = pd */
 #define EHMB_ADDERRORMSG  0x09 /* Param1 = pem */

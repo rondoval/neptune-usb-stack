@@ -5571,8 +5571,9 @@ void (psdRemHardware)(struct PsdHardware * phw asm("a0"), struct PsdBase * ps as
     pd = (struct PsdDevice *) phw->phw_Devices.lh_Head;
     while(pd->pd_Node.ln_Succ) {
         pFreeBindings(ps, pd);
-        pFreeDevice(ps, pd);
+        /* before the free; the note still arrives after it (identity only) */
         psdSendEvent(EHMB_REMDEVICE, pd, NULL);
+        pFreeDevice(ps, pd);
         pd = (struct PsdDevice *) phw->phw_Devices.lh_Head;
     }
     pd = (struct PsdDevice *) phw->phw_DeadDevices.lh_Head;
@@ -5627,13 +5628,14 @@ void (psdRemHardware)(struct PsdHardware * phw asm("a0"), struct PsdBase * ps as
     psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
                    "Removed hardware %s/%ld.",
                    phw->phw_DevName, phw->phw_Unit);
+    /* before the free; the note still arrives after it (identity only) */
+    psdSendEvent(EHMB_REMHARDWARE, phw, NULL);
     psdFreeVec(phw->phw_DevName);
     psdFreeVec(phw->phw_ProductName);
     psdFreeVec(phw->phw_Manufacturer);
     psdFreeVec(phw->phw_Description);
     psdFreeVec(phw->phw_Copyright);
     psdFreeVec(phw);
-    psdSendEvent(EHMB_REMHARDWARE, phw, NULL);
     KPRINTF(1, ("FreeHardware(0x%08lx) done\n", phw));
 }
 /* \\\ */
@@ -7355,11 +7357,12 @@ void (psdRemClass)(struct PsdUsbClass * puc asm("a1"), struct PsdBase * ps asm("
     psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
                    "Removed class %s.",
                    puc->puc_ClassBase->lib_Node.ln_Name);
+    /* before the free; the note still arrives after it (identity only) */
+    psdSendEvent(EHMB_REMCLASS, puc, NULL);
     CloseLibrary(puc->puc_ClassBase);
     psdFreeVec(puc->puc_ClassName);
     psdFreeVec(puc->puc_FullPath);
     psdFreeVec(puc);
-    psdSendEvent(EHMB_REMCLASS, puc, NULL);
 }
 /* \\\ */
 
