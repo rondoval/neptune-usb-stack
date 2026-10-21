@@ -1,41 +1,41 @@
 /*
  *----------------------------------------------------------------------------
- *                          UVC Test for Neptune
+ *                          USBVideoTest - UVC test bench for Neptune
  *----------------------------------------------------------------------------
  * Test bench for usbvideo.class via usbvideo.device: mode negotiation,
  * capture with per-frame validation, controls, status events and the VHI
  * driver. Every test prints PASS or FAIL. Built with the stack, not
- * shipped; the user tool is UVCTool.
+ * shipped; the user tool is USBVideo.
  *
- *   UVCTest                        unit 0: camera info and mode table
- *   UVCTest UNIT=1                 another unit
- *   UVCTest WIDTH=1280 HEIGHT=720  negotiate that size at its default rate
- *   UVCTest WIDTH=640 HEIGHT=480 FPS=15
- *   UVCTest PROBE                  negotiate every mode in the table
- *   UVCTest FRAMES=300             capture 300 frames in the default mode (or
+ *   USBVideoTest                   unit 0: camera info and mode table
+ *   USBVideoTest UNIT=1            another unit
+ *   USBVideoTest WIDTH=1280 HEIGHT=720  negotiate that size at its default rate
+ *   USBVideoTest WIDTH=640 HEIGHT=480 FPS=15
+ *   USBVideoTest PROBE             negotiate every mode in the table
+ *   USBVideoTest FRAMES=300        capture 300 frames in the default mode (or
  *                                  WIDTH/HEIGHT/FPS); check count, rate and
  *                                  frame contents
- *   UVCTest FRAMES=10 TO=RAM:cam   ... and save them as RAM:cam-0001.jpg ...
- *   UVCTest FORMAT=YUY2 FRAMES=10  capture in a format other than the default
+ *   USBVideoTest FRAMES=10 TO=RAM:cam   ... and save them as RAM:cam-0001.jpg ...
+ *   USBVideoTest FORMAT=YUY2 FRAMES=10  capture in a format other than the default
  *                                  (MJPG if available). Uncompressed: every
  *                                  frame must be exactly uvq_MaxFrameSize,
  *                                  saved raw as RAM:cam-0001.yuy2. H264: no
  *                                  sequence gap allowed, saved as one stream,
  *                                  RAM:cam.h264
- *   UVCTest FORMAT=H264 BITRATE=1000000 KEYFRAME=2000 FRAMES=300
+ *   USBVideoTest FORMAT=H264 BITRATE=1000000 KEYFRAME=2000 FRAMES=300
  *                                  ... with encoder bit rate (bit/s) and key
  *                                  frame interval (ms). Only H264 modes of a
  *                                  camera with an H.264 extension unit accept
  *                                  them (<devices/usb_video.h>)
- *   UVCTest CYCLES=20              20 x start, capture FRAMES (default 10),
+ *   USBVideoTest CYCLES=20         20 x start, capture FRAMES (default 10),
  *                                  stop; then close the unit while streaming,
  *                                  reopen and capture again
- *   UVCTest CONTROLS               print entity topology and named controls;
+ *   USBVideoTest CONTROLS          print entity topology and named controls;
  *                                  write one control, read back, restore
- *   UVCTest EVENTS=20              while streaming: write each asynchronous
+ *   USBVideoTest EVENTS=20         while streaming: write each asynchronous
  *                                  control and expect its status event, toggle
  *                                  each auto mode and back, then listen 20 s
- *   UVCTest VHI                    drive LIBS:VHI/usbvideo.vhi as a VHI client:
+ *   USBVideoTest VHI               drive LIBS:VHI/usbvideo.vhi as a VHI client:
  *                                  check the offered sizes against the mode
  *                                  table, then grab FRAMES pictures (default
  *                                  30) at the size nearest WIDTH x HEIGHT
@@ -86,9 +86,9 @@ enum
 
 #define TICKS_PER_SEC 50
 
-const char UVCTest_prgname[] = "UVCTest";
+const char USBVideoTest_prgname[] = "USBVideoTest";
 static const char *template = "UNIT/N/K,PROBE/S,WIDTH/N/K,HEIGHT/N/K,FPS/N/K,FRAMES/N/K,TO/K,CYCLES/N/K,VHI/S,CONTROLS/S,EVENTS/N/K,FORMAT/K,BITRATE/N/K,KEYFRAME/N/K";
-const char UVCTest_version[] = NEP_VER("UVCTest");
+const char USBVideoTest_version[] = NEP_VER("USBVideoTest");
 static LONG ArgsArray[ARGS_SIZEOF];
 
 /* Set a mode (NSCMD_UV_SETMODE), print the negotiated mode and leave it in

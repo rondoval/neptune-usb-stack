@@ -1,6 +1,6 @@
 /*
  *----------------------------------------------------------------------------
- *                         DRadio Tool for Neptune
+ *                         USBRadio - DRadio tool for Neptune
  *----------------------------------------------------------------------------
  * Based on the Poseidon DRadio Tool by Chris Hodges <chrisly@platon42.de>.
  */
@@ -11,7 +11,7 @@
 #include <proto/exec.h>
 #include <proto/neptune.h>
 
-#include "DRadioTool.h"
+#include "USBRadio.h"
 #include <string.h>
 #include <neptune_version.h>
 
@@ -24,9 +24,9 @@
 #define ARGS_UNIT     6
 #define ARGS_SIZEOF   7
 
-const char DRadioTool_prgname[] = "DRadioTool";
+const char USBRadio_prgname[] = "USBRadio";
 static const char *template = "ON/S,OFF/S,FREQ/K/N,SCAN/S,AUTO/S,SIGNAL/S,UNIT/N/K";
-const char DRadioTool_version[] = NEP_VER("DRadioTool");
+const char USBRadio_version[] = NEP_VER("USBRadio");
 static IPTR ArgsArray[ARGS_SIZEOF];
 static struct RDArgs *ArgsHook = NULL;
 

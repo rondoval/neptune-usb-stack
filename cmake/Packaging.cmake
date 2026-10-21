@@ -98,8 +98,8 @@ foreach(i RANGE ${_n})
 endforeach()
 
 # Niche per-gadget tools - opt-in at install time (the Installer asks); shipped under Tools/.
-# UVCTest, the test bench of usbvideo.class, is built but not shipped.
-install(TARGETS DRadioTool PencamTool PowManTool RocketTool SonixcamTool UPSTool UVCTool
+# USBVideoTest, the test bench of usbvideo.class, is built but not shipped.
+install(TARGETS USBRadio USBPencam USBPowMan USBRocket USBSonixcam USBUPS USBVideo
         RUNTIME DESTINATION Tools)
 
 # The VHI driver for USB video cameras - opt-in at install time; VHI applications look for
@@ -126,7 +126,7 @@ install(FILES ${CMAKE_SOURCE_DIR}/dist/Install
 # emu68-driver-stack's @DEBUG_BACKEND@ ReadMe.
 #
 # No variant needs an FPU: the stack itself has no floating point at all, and the only
-# code that does - the gamma table in the optional PencamTool/SonixcamTool - is soft-float
+# code that does - the gamma table in the optional USBPencam/USBSonixcam - is soft-float
 # in the 68020 build and emulated by 68040.library/68060.library on an LC part.
 if(M68K_CPU STREQUAL "68020")
     set(CPU_DESCRIPTION

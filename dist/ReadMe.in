@@ -48,7 +48,7 @@ that matches your machine.
 No variant needs an FPU. The stack itself - neptune.library, the classes,
 Neptune USB and USBEject - contains no floating point at all. The only floating
 point in the distribution is the gamma table computed by the two optional
-camera tools, PencamTool and SonixcamTool; in the -020 archive that is
+camera tools, USBPencam and USBSonixcam; in the -020 archive that is
 soft-float, and in the -040/-060 archives 68040.library/68060.library cover
 it on a part without an FPU.
 

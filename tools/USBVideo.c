@@ -1,20 +1,20 @@
 /*
  *----------------------------------------------------------------------------
- *                          UVC Tool for Neptune
+ *                          USBVideo - UVC tool for Neptune
  *----------------------------------------------------------------------------
  * usbvideo.device command-line client: prints camera info and the mode
  * table, captures frames to files.
  *
- *   UVCTool                        unit 0: camera info and mode table
- *   UVCTool UNIT=1                 another unit
- *   UVCTool TO=RAM:shot            one frame in the default mode,
+ *   USBVideo                        unit 0: camera info and mode table
+ *   USBVideo UNIT=1                 another unit
+ *   USBVideo TO=RAM:shot            one frame in the default mode,
  *                                  RAM:shot-0001.jpg
- *   UVCTool WIDTH=1280 HEIGHT=720 FPS=30 FRAMES=10 TO=RAM:cam
+ *   USBVideo WIDTH=1280 HEIGHT=720 FPS=30 FRAMES=10 TO=RAM:cam
  *                                  10 frames in that mode, RAM:cam-0001.jpg
  *                                  .. RAM:cam-0010.jpg
- *   UVCTool FORMAT=YUY2 FRAMES=10 TO=RAM:cam
+ *   USBVideo FORMAT=YUY2 FRAMES=10 TO=RAM:cam
  *                                  raw frames, RAM:cam-0001.yuy2 ...
- *   UVCTool FORMAT=H264 WIDTH=1280 HEIGHT=720 FRAMES=300 TO=RAM:cam
+ *   USBVideo FORMAT=H264 WIDTH=1280 HEIGHT=720 FRAMES=300 TO=RAM:cam
  *                                  H.264 elementary stream, RAM:cam.h264.
  *                                  BITRATE (bit/s) and KEYFRAME (key frame
  *                                  interval, ms) override the encoder's
@@ -50,9 +50,9 @@ enum
     ARGS_SIZEOF
 };
 
-const char UVCTool_prgname[] = "UVCTool";
+const char USBVideo_prgname[] = "USBVideo";
 static const char *template = "UNIT/N/K,TO/K,FORMAT/K,WIDTH/N/K,HEIGHT/N/K,FPS/N/K,FRAMES/N/K,BITRATE/N/K,KEYFRAME/N/K";
-const char UVCTool_version[] = NEP_VER("UVCTool");
+const char USBVideo_version[] = NEP_VER("USBVideo");
 static LONG ArgsArray[ARGS_SIZEOF];
 
 /* Return the value of a /N argument, or none if it is absent */
@@ -75,7 +75,7 @@ static BOOL setMode(struct UvcCamera *cm, struct UsbVideoModeReq *uvq)
         Printf("Could not set that mode: %s\n", uvcErrorText(err));
         if(err == UVERR_BADMODE)
         {
-            PutStr("UVCTool without TO lists the modes it has.\n");
+            PutStr("USBVideo without TO lists the modes it has.\n");
         }
         return FALSE;
     }
@@ -164,7 +164,7 @@ int main(int argc, char *argv[])
 
     if(!rdargs)
     {
-        PrintFault(IoErr(), (STRPTR) UVCTool_prgname);
+        PrintFault(IoErr(), (STRPTR) USBVideo_prgname);
         return RETURN_FAIL;
     }
 
@@ -192,7 +192,7 @@ int main(int argc, char *argv[])
     }
     if(howtosave && !stem)
     {
-        PutStr("Add TO=<name> to save in that mode. Without TO, UVCTool lists the modes.\n");
+        PutStr("Add TO=<name> to save in that mode. Without TO, USBVideo lists the modes.\n");
         FreeArgs(rdargs);
         return RETURN_FAIL;
     }

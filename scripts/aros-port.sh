@@ -75,6 +75,20 @@ renamed=(
     "PsdStackLoader.c    USBStart.c"
     "PsdDevLister.c      USBList.c"
     "PsdErrorlog.c       USBErrorlog.c"
+    "AddUSBHardware.c    USBAddHardware.c"
+    "AddUSBClasses.c     USBAddClasses.c"
+    "DRadioTool.c        USBRadio.c"
+    "DRadioTool.h        USBRadio.h"
+    "PencamTool.c        USBPencam.c"
+    "PencamTool.h        USBPencam.h"
+    "PowManTool.c        USBPowMan.c"
+    "PowManTool.h        USBPowMan.h"
+    "RocketTool.c        USBRocket.c"
+    "RocketTool.h        USBRocket.h"
+    "SonixcamTool.c      USBSonixcam.c"
+    "SonixcamTool.h      USBSonixcam.h"
+    "UPSTool.c           USBUPS.c"
+    "UPSTool.h           USBUPS.h"
 )
 
 # Our path for an upstream file, or nothing if we have no place for it.

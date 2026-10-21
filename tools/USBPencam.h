@@ -1,5 +1,5 @@
-#ifndef PENCAMTOOL_H
-#define PENCAMTOOL_H
+#ifndef USBPENCAM_H
+#define USBPENCAM_H
 
 /* pencam vendor specific requests */
 
@@ -123,4 +123,4 @@ struct NepClassPencam
     ULONG               nch_RawBufSize;   /* Size of the allocated buffer */
 };
 
-#endif /* PENCAMTOOL_H */
+#endif /* USBPENCAM_H */

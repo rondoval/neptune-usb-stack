@@ -233,9 +233,9 @@
 (complete 75)
 (if (askbool
         (prompt ("Install the optional per-gadget tools?\n\n"
-                 "DRadioTool, PencamTool, PowManTool, RocketTool, SonixcamTool, "
-                 "UPSTool, UVCTool - small utilities for specific USB gadgets. "
-                 "UVCTool is the one for UVC devices (USB video). Install them "
+                 "USBRadio, USBPencam, USBPowMan, USBRocket, USBSonixcam, "
+                 "USBUPS, USBVideo - small utilities for specific USB gadgets. "
+                 "USBVideo is the one for UVC devices (USB video). Install them "
                  "only if you own the matching hardware."))
         (help "These are niche command-line utilities for specific USB devices. "
               "They are not needed for the stack itself.")
@@ -349,6 +349,12 @@
         )
     )
 )
+(P_delv6 "SYS:Tools/DRadioTool")
+(P_delv6 "SYS:Tools/PencamTool")
+(P_delv6 "SYS:Tools/PowManTool")
+(P_delv6 "SYS:Tools/RocketTool")
+(P_delv6 "SYS:Tools/SonixcamTool")
+(P_delv6 "SYS:Tools/UPSTool")
 
 ;==========================================================================
 ; Auto-start

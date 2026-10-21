@@ -4,7 +4,7 @@
  *----------------------------------------------------------------------------
  *              UVC tools: usbvideo.device client helpers
  *----------------------------------------------------------------------------
- * Shared by UVCTool and UVCTest. Device API only, no neptune.library calls.
+ * Shared by USBVideo and USBVideoTest. Device API only, no neptune.library calls.
  *  - camera:  open a unit, read NSCMD_UV_GETINFO and the mode table
  *  - text:    print camera info, mode table, negotiated mode
  *  - capture: UVC_NUM_READS CMD_READs kept queued, complete frames returned

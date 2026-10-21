@@ -24,7 +24,7 @@
 #                 commands, NeptuneUSB, USBEject and the VHI driver (to LIBS:VHI/)
 #     (none of --build/--package/--upload => --build --upload)
 #     --tools     also upload the optional per-gadget tools to SYS:Tools/, and the test
-#                 tools that no archive has (UVCTest)
+#                 tools that no archive has (USBVideoTest)
 #     --all-cpus  build/package every released CPU (68020, 68040, 68060) in turn, each
 #                 in its own build dir; cannot be combined with --upload
 #     --dry-run   upload: show what would be copied; copy nothing
@@ -83,7 +83,7 @@ BUILD_STAMP="$(build_stamp)"
 # The FPU pairing is not a free choice: 68020 machines usually have no FPU and the
 # soft-float 020 runtime is the one that matches (libm020 without libm881), while 68040
 # and 68060 pair with the hard-float one. Nothing in the stack computes in floating point
-# anyway - only the optional PencamTool/SonixcamTool gamma table does.
+# anyway - only the optional USBPencam/USBSonixcam gamma table does.
 RELEASE_CPUS=(68020 68040 68060)
 DEFAULT_CPU=68040
 CPU="${CPU:-$DEFAULT_CPU}"
@@ -156,17 +156,17 @@ CORE=(
 )
 # Optional per-gadget tools
 GADGET_TOOLS=(
-    "tools/DRadioTool|SYS:Tools/DRadioTool"
-    "tools/PencamTool|SYS:Tools/PencamTool"
-    "tools/PowManTool|SYS:Tools/PowManTool"
-    "tools/RocketTool|SYS:Tools/RocketTool"
-    "tools/SonixcamTool|SYS:Tools/SonixcamTool"
-    "tools/UPSTool|SYS:Tools/UPSTool"
-    "tools/UVCTool|SYS:Tools/UVCTool"
+    "tools/USBRadio|SYS:Tools/USBRadio"
+    "tools/USBPencam|SYS:Tools/USBPencam"
+    "tools/USBPowMan|SYS:Tools/USBPowMan"
+    "tools/USBRocket|SYS:Tools/USBRocket"
+    "tools/USBSonixcam|SYS:Tools/USBSonixcam"
+    "tools/USBUPS|SYS:Tools/USBUPS"
+    "tools/USBVideo|SYS:Tools/USBVideo"
 )
 # Test tools: built and uploaded with the gadget tools, in no archive
 TEST_TOOLS=(
-    "tools/UVCTest|SYS:Tools/UVCTest"
+    "tools/USBVideoTest|SYS:Tools/USBVideoTest"
 )
 
 # --- helpers -----------------------------------------------------------------
