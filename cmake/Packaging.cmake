@@ -9,7 +9,7 @@
 #         LIBS/neptune.library
 #         LIBS/VHI/usbvideo.vhi            VHI driver for USB cameras -> LIBS:VHI/ (opt-in)
 #         DEVS/USBClasses/*.class
-#         C/USBStart AddUSBHardware AddUSBClasses USBList USBErrorlog
+#         C/USBStart USBAddHardware USBAddClasses USBList USBErrorlog
 #         Prefs/NeptuneUSB  Prefs/NeptuneUSB.info
 #         WBStartup/USBEject  WBStartup/USBEject.info  (safe-eject Workbench menu, opt-in)
 #         Tools/<shellapps>                (optional group, opt-in at install)
@@ -35,7 +35,7 @@ install(TARGETS neptune_library RUNTIME DESTINATION LIBS)
 get_property(_neptune_classes GLOBAL PROPERTY NEPTUNE_CLASS_TARGETS)
 install(TARGETS ${_neptune_classes} RUNTIME DESTINATION DEVS/USBClasses)
 
-install(TARGETS USBStart AddUSBHardware AddUSBClasses USBList USBErrorlog
+install(TARGETS USBStart USBAddHardware USBAddClasses USBList USBErrorlog
         RUNTIME DESTINATION C)
 
 # --- ROM/ : the Kickstart-image kit ---------------------------------------------------

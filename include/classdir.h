@@ -2,7 +2,7 @@
 #define NEPTUNE_CLASSDIR_H
 /*
  * One definition of "load every class driver in the class drawer", shared by
- * USBStart, AddUSBClasses and NeptuneUSB.
+ * USBStart, USBAddClasses and NeptuneUSB.
  *
  * A class already in the stack is left alone, so this is safe to run on a
  * stack that came up from ROM with some classes resident, or more than once.
@@ -22,7 +22,7 @@
 #define NEP_CLASSNAMEMAX 128
 
 /* Returns FALSE if the drawer could not be read. `verbose` prints one line
-   per file, as AddUSBClasses does. */
+   per file, as USBAddClasses does. */
 static inline BOOL psdAddClassDir(struct Library *ps, BOOL verbose)
 {
     UBYTE buf[1024];

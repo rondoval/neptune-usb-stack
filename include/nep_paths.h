@@ -24,5 +24,6 @@
 #define NEP_OLDCLASSDRAWER    "SYS:Classes/USB"
 #define NEP_OLDPRESETDRAWER   "SYS:Prefs/Presets/Poseidon"
 #define NEP_OLDPREFS_OWNER    "Trident"
+#define NEP_OLDLIBNAME        "poseidon.library"   /* see <nep_otherstack.h> */
 
 #endif /* NEPTUNE_PATHS_H */

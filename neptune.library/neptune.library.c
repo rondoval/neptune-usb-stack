@@ -30,6 +30,8 @@
 
 #include <string.h>
 
+#include <nep_otherstack.h>
+
 /* amiga.lib veneer (jumps to the device's BEGINIO vector); declared in
  * <clib/alib_protos.h>, which we don't pull in -- exec_protos.h has DoIO/SendIO
  * but not BeginIO.  Used by pSubmitPipe() for traditional IOF_QUICK quick-I/O. */
@@ -5660,6 +5662,25 @@ void (psdRemHardware)(struct PsdHardware * phw asm("a0"), struct PsdBase * ps as
 }
 /* \\\ */
 
+/* /// "pPoseidonLoaded()" */
+/* TRUE if Poseidon is loaded (<nep_otherstack.h>), which refuses what (a class or a
+   controller, or NULL for the whole config) with a log line. */
+static BOOL pPoseidonLoaded(struct PsdBase *ps, CONST_STRPTR what)
+{
+    UWORD other = nepPoseidonLoaded();
+    if(!other) {
+        return FALSE;
+    }
+    if(what) {
+        psdAddErrorMsg(RETURN_ERROR, (STRPTR) libname, "%s not added: " NEP_OTHERSTACK_TXT,
+                       (STRPTR) what, (LONG) other);
+    } else {
+        psdAddErrorMsg(RETURN_ERROR, (STRPTR) libname, NEP_OTHERSTACK_TXT, (LONG) other);
+    }
+    return TRUE;
+}
+/* \\\ */
+
 /* /// "psdAddHardware()" */
 struct PsdHardware * (psdAddHardware)(STRPTR name asm("a0"), ULONG unit asm("d0"), struct PsdBase * ps asm("a6"))
 {
@@ -5684,6 +5705,9 @@ struct PsdHardware * (psdAddHardware)(STRPTR name asm("a0"), ULONG unit asm("d0"
         psdAddErrorMsg(RETURN_WARN, (STRPTR) libname,
                        "Hardware %s/%ld is already installed.", name, unit);
         return(NULL);
+    }
+    if(pPoseidonLoaded(ps, name)) {
+        return NULL;
     }
 
     if((phw = psdAllocVec(sizeof(struct PsdHardware)))) {
@@ -7288,6 +7312,12 @@ struct PsdUsbClass * (psdAddClass)(STRPTR name asm("a1"), ULONG vers asm("d0"), 
 
     KPRINTF(5, ("psdAddClass(%s, %ld)\n", name, vers));
 
+    /* Before any OpenLibrary(): ramlib would hand over Poseidon's loaded class of
+       the same name. */
+    if(pPoseidonLoaded(ps, name)) {
+        return NULL;
+    }
+
     while(*name) {
         if((cls = OpenLibrary(name, vers))) {
             break;
@@ -8753,6 +8783,10 @@ void (psdParseCfg)(struct PsdBase * ps asm("a6"))
     BOOL nodos = (FindTask(NULL)->tc_Node.ln_Type != NT_PROCESS);
 
     XPRINTF(10, ("psdParseCfg()\n"));
+
+    if(pPoseidonLoaded(ps, NULL)) {
+        return;
+    }
 
     pLockSemShared(ps, &ps->ps_ConfigLock);
     pCheckCfgChanged(ps);

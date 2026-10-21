@@ -90,8 +90,8 @@
         (prompt ("Installing " @each-name " into C:"))
         (help ("These commands bring the stack up and inspect it:\n\n"
                "  USBStart        - start the stack (the one startup command)\n"
-               "  AddUSBHardware  - attach a host-controller device by hand\n"
-               "  AddUSBClasses   - load the classes from DEVS:USBClasses/ by hand\n"
+               "  USBAddHardware  - attach a host-controller device by hand\n"
+               "  USBAddClasses   - load the classes from DEVS:USBClasses/ by hand\n"
                "  USBList         - list the connected USB devices\n"
                "  USBErrorlog     - show the stack error log\n\n" @copylib-help))
         (source (tackon "C" @each-name))
@@ -349,6 +349,11 @@
         )
     )
 )
+
+; Commands and tools that carried Poseidon's names up to 6.2 (USBAddHardware, USBAddClasses
+; and USB<gadget> now). Only 6.x copies go; a classic Poseidon's own are left alone.
+(P_delv6 "C:AddUSBHardware")
+(P_delv6 "C:AddUSBClasses")
 (P_delv6 "SYS:Tools/DRadioTool")
 (P_delv6 "SYS:Tools/PencamTool")
 (P_delv6 "SYS:Tools/PowManTool")

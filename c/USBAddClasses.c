@@ -1,5 +1,7 @@
 /*
-** AddUSBClasses by Chris Hodges <chrisly@platon42.de>
+** USBAddClasses: load the classes in DEVS:USBClasses, or remove them, by hand.
+**
+** Based on Poseidon's AddUSBClasses by Chris Hodges <chrisly@platon42.de>.
 */
 
 #include <stdio.h>
@@ -16,13 +18,14 @@
 #include <proto/dos.h>
 #include <neptune_version.h>
 #include <classdir.h>
+#include <nep_otherstack.h>
 
 #define ARGS_QUIET      0
 #define ARGS_REMOVE     1
 #define ARGS_SIZEOF     2
 
 static const char *template = "QUIET/S,REMOVE/S";
-const char *version = NEP_VER("AddUSBClasses") ", (C) The AROS Development Team";
+const char *version = NEP_VER("USBAddClasses") ", (C) The AROS Development Team";
 static IPTR ArgsArray[ARGS_SIZEOF];
 static struct RDArgs *ArgsHook = NULL;
 
@@ -70,6 +73,14 @@ int main(int argc, char *argv[])
             }
             psdUnlockPBase();
         } else {
+            UWORD other = nepPoseidonLoaded();
+            if(other)
+            {
+                Printf(NEP_OTHERSTACK_TXT "\n", (LONG) other);
+                CloseLibrary(ps);
+                FreeArgs(ArgsHook);
+                return RETURN_WARN;
+            }
             if(psdAddClassDir(ps, !ArgsArray[ARGS_QUIET]))
             {
                 psdClassScan();

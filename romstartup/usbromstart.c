@@ -48,6 +48,7 @@
 #include <inline/usbclass.h>
 
 #include <neptune_version.h>
+#include <nep_otherstack.h>
 #include "debug.h"
 
 /* This is only the compile-time default (cmake -DROMSTART_HCD=<name>); the slot
@@ -436,6 +437,15 @@ static ULONG initUsbRom(ULONG            dummy   asm("d0"),
     if(!ps)
     {
         KPRINTF(20, ("usbromstart: neptune.library not available\n"));
+        return 0;
+    }
+
+    /* Before DOS only a ROM-resident Poseidon can be in the list. */
+    UWORD other = nepPoseidonLoaded();
+    if(other)
+    {
+        psdAddErrorMsg(RETURN_ERROR, (STRPTR)origin, NEP_OTHERSTACK_TXT, (LONG)other);
+        CloseLibrary(ps);
         return 0;
     }
 

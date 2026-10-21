@@ -146,8 +146,8 @@ cpu_setup "$CPU"
 CORE=(
     "neptune.library/neptune.library|LIBS:neptune.library"
     "c/USBStart|C:USBStart"
-    "c/AddUSBHardware|C:AddUSBHardware"
-    "c/AddUSBClasses|C:AddUSBClasses"
+    "c/USBAddHardware|C:USBAddHardware"
+    "c/USBAddClasses|C:USBAddClasses"
     "c/USBList|C:USBList"
     "c/USBErrorlog|C:USBErrorlog"
     "neptuneusb/NeptuneUSB|SYS:Prefs/NeptuneUSB"
@@ -307,7 +307,7 @@ if (( DO_UPLOAD )); then
     else
         echo "done: $ok copied, $fail failed."
         echo "Note: neptune.library / *.class are loaded into memory at boot - reboot"
-        echo "      (or unload the stack and re-run USBStart / AddUSBClasses) to pick up changes."
+        echo "      (or unload the stack and re-run USBStart / USBAddClasses) to pick up changes."
     fi
 fi
 (( fail == 0 ))
