@@ -29,7 +29,7 @@ body:
     attributes:
       label: Affected component
       description: Which part of the stack this touches, if known.
-      placeholder: "new ethernet class / hub.class / Neptune USB / neptune.library"
+      placeholder: "new ethernet class / hub.usbclass / Neptune USB / neptune.library"
     validations:
       required: false
 

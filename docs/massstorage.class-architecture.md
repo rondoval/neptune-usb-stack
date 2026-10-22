@@ -1,6 +1,6 @@
-# massstorage.class - Architecture
+# massstorage.usbclass - Architecture
 
-> **Scope:** `massstorage.class`, the USB Mass Storage driver: an interface-level class, the
+> **Scope:** `massstorage.usbclass`, the USB Mass Storage driver: an interface-level class, the
 > embedded `usbscsi.device`, three USB transports, the removable-media task and the mounter
 > (`classes/massstorage/mounter`, a fork of the a4091.device mounter, built into the class).
 > It is a client of `neptune.library`; read [neptune.library-architecture.md](neptune.library-architecture.md)
@@ -15,7 +15,7 @@
 
 ## 1. Purpose
 
-`massstorage.class` turns USB storage into AmigaDOS volumes. It has four jobs:
+`massstorage.usbclass` turns USB storage into AmigaDOS volumes. It has four jobs:
 
 1. **Expose storage as a disk device.** Every bound mass-storage interface becomes one
    `usbscsi.device` unit per LUN, speaking the trackdisk, TD64/NSD and `HD_SCSICMD` protocols that
@@ -39,7 +39,7 @@ It binds at the **interface** level, on `MASSSTORE_CLASSCODE`.
 flowchart TB
     FS["filesystems, tools: OpenDevice usbscsi.device"]
     GATE["ROM boot gate (romstartup)"]
-    subgraph MS["massstorage.class binary"]
+    subgraph MS["massstorage.usbclass binary"]
         DEV["usbscsi.device: one unit per LUN"]
         CORE["unit tasks: SCSI layer + BOT / CBI / UAS"]
         RT["removable task"]

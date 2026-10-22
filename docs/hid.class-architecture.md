@@ -1,6 +1,6 @@
-# hid.class - Architecture
+# hid.usbclass - Architecture
 
-> **Scope:** `hid.class`, the generic USB Human Interface Device driver: keyboards, mice, joysticks,
+> **Scope:** `hid.usbclass`, the generic USB Human Interface Device driver: keyboards, mice, joysticks,
 > gamepads, tablets, and the system and consumer controls on them. It is a client of
 > `neptune.library`; read [neptune.library-architecture.md](neptune.library-architecture.md) first
 > (task model §4, binding §5.5, settings §5.12).
@@ -12,7 +12,7 @@
 
 ## 1. Purpose
 
-`hid.class` turns any HID interface into Amiga input. Unlike `bootkeyboard`/`bootmouse`, which
+`hid.usbclass` turns any HID interface into Amiga input. Unlike `bootkeyboard`/`bootmouse`, which
 speak only the fixed boot protocol, it parses the device's report descriptor, and it maps every
 field through a configurable rule engine instead of a fixed table. It has five jobs:
 
@@ -33,7 +33,7 @@ It binds at the **interface** level, on `HID_CLASSCODE`, boot or report protocol
 ```mermaid
 flowchart TB
     CORE["neptune.library"]
-    subgraph HID["hid.class"]
+    subgraph HID["hid.usbclass"]
         TASK["HID task: one per binding"]
         DISP["dispatcher task: one per class"]
         GUI["action editor + control panel: per binding"]
@@ -60,10 +60,10 @@ flowchart TB
   as native joyports and can drive rumble.
 - **Sideways** it makes no calls into other classes.
 
-**Split with the boot classes.** `hid.class` scans at priority 0, the boot classes at -100. The
-shipping ROM does not contain `hid.class`: `romstartup` tries it, falls back to the boot classes,
+**Split with the boot classes.** `hid.usbclass` scans at priority 0, the boot classes at -100. The
+shipping ROM does not contain `hid.usbclass`: `romstartup` tries it, falls back to the boot classes,
 and the AfterDOS pass of the first scan from a process releases their bindings (they set
-`UCCA_AfterDOSRestart`) so the disk-loaded `hid.class` takes over (core doc §5.1).
+`UCCA_AfterDOSRestart`) so the disk-loaded `hid.usbclass` takes over (core doc §5.1).
 
 ---
 
@@ -129,7 +129,7 @@ reads the joyport latches while walking the binding list under `Forbid`.
 ```mermaid
 sequenceDiagram
     participant CORE as neptune.library
-    participant DISP as hid.class dispatcher
+    participant DISP as hid.usbclass dispatcher
     participant T as new HID task
 
     CORE->>DISP: UCM_AttemptInterfaceBinding (class HID)

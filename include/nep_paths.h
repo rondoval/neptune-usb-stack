@@ -7,6 +7,7 @@
 
 #define NEP_HWDRAWER      "DEVS:USBHardware"            /* host-controller drivers */
 #define NEP_CLASSDRAWER   "DEVS:USBClasses"             /* class drivers */
+#define NEP_CLASSSUFFIX   ".usbclass"                   /* file = library name suffix */
 #define NEP_PRESETDRAWER  "SYS:Prefs/Presets/Neptune"   /* attach/detach sounds */
 #define NEP_PREFS_ENV     "ENV:Sys/neptune.prefs"
 #define NEP_PREFS_ENVARC  "ENVARC:Sys/neptune.prefs"
@@ -17,12 +18,13 @@
 
 /* Poseidon names. When no neptune.prefs exists, poseidon.prefs is loaded
    and saved as neptune.prefs. Wherever prefs data enters the config (any
-   load, any imported entry), the drawer prefixes and the owner key below are
-   rewritten to the ones above (see pMigrateCfg()). */
+   load, any imported entry), the drawer prefixes, the class suffix and the owner
+   key below are rewritten to the ones above (see pMigrateCfg()). */
 #define NEP_OLDPREFS_ENV      "ENV:Sys/poseidon.prefs"
 #define NEP_OLDPREFS_ENVARC   "ENVARC:Sys/poseidon.prefs"
 #define NEP_OLDCLASSDRAWER    "SYS:Classes/USB"
 #define NEP_OLDPRESETDRAWER   "SYS:Prefs/Presets/Poseidon"
+#define NEP_OLDCLASSSUFFIX    ".class"
 #define NEP_OLDPREFS_OWNER    "Trident"
 #define NEP_OLDLIBNAME        "poseidon.library"   /* see <nep_otherstack.h> */
 

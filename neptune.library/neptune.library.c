@@ -25,7 +25,7 @@
 #include <proto/exec.h>
 #include <proto/dos.h>
 #include <proto/utility.h>
-#include <proto/usbclass.h>
+#include <proto/neptune_class.h>
 #include <proto/timer.h>
 
 #include <string.h>
@@ -2788,7 +2788,7 @@ static LONG pContextAddressDevice(struct PsdBase *ps, struct PsdPipe *pp, struct
     LONG ioerr;
 
     memset(&cdo, 0, sizeof(cdo));
-    /* hub.class sets DA_HubDevice/DA_AtHubPortNumber/speed attrs before
+    /* hub.usbclass sets DA_HubDevice/DA_AtHubPortNumber/speed attrs before
        enumeration, so parent and port are already on the device */
     if(pd->pd_Hub) {
         cdo.cdo_ParentHandle = pd->pd_Hub->pd_Handle;
@@ -3105,7 +3105,7 @@ static void pContextUpdateHub(struct PsdBase *ps, struct PsdDevice *pd)
     uho.uho_NumPorts = pd->pd_HubNumPorts;
     uho.uho_TTThinkTime = pd->pd_HubThinkTime;
     uho.uho_MultiTT = (pd->pd_Flags & PDFF_MULTITT) ? 1 : 0;
-    uho.uho_HdrDecLat = (UBYTE) pd->pd_HubHdrDecLat; /* SS hubs (hubss.class); 0 otherwise */
+    uho.uho_HdrDecLat = (UBYTE) pd->pd_HubHdrDecLat; /* SS hubs (hubss.usbclass); 0 otherwise */
     uho.uho_HubDelay = pd->pd_HubDelay;
 
     ioerr = pCtxDoOpOnDevice(ps, pd, NSCMD_USB_UPDATE_HUB, &uho, sizeof(uho));
@@ -4459,7 +4459,7 @@ struct PsdDevice * (psdEnumerateDevice)(struct PsdPipe * pp asm("a1"), struct Ps
     pd->pd_Flags |= PDFF_HASDEVDESC;
     pd->pd_USBVers = AROS_LE2WORD(usdd.bcdUSB);
     /* A root hub's speed is its controller's: a USB 2.0 root hub is high
-       speed (hub.class enforces split transactions below it), a full-speed
+       speed (hub.usbclass enforces split transactions below it), a full-speed
        controller's stays full speed. The SuperSpeed root hub is flagged
        before enumeration (psdEnumerateHardware). */
     if(!pd->pd_Hub && (pd->pd_USBVers >= 0x200) && !(pd->pd_Flags & PDFF_SUPERSPEED)) {
@@ -5663,8 +5663,8 @@ void (psdRemHardware)(struct PsdHardware * phw asm("a0"), struct PsdBase * ps as
 /* \\\ */
 
 /* /// "pPoseidonLoaded()" */
-/* TRUE if Poseidon is loaded (<nep_otherstack.h>), which refuses what (a class or a
-   controller, or NULL for the whole config) with a log line. */
+/* TRUE if Poseidon is loaded (<nep_otherstack.h>), which refuses what (a controller,
+   or NULL for the whole config) with a log line. */
 static BOOL pPoseidonLoaded(struct PsdBase *ps, CONST_STRPTR what)
 {
     UWORD other = nepPoseidonLoaded();
@@ -5700,7 +5700,7 @@ struct PsdHardware * (psdAddHardware)(STRPTR name asm("a0"), ULONG unit asm("d0"
        second PsdHardware, a second device task and a second root-hub enumeration
        of the same controller -- which is what happens when a Kickstart-resident
        stack has already added the host controller and S:User-Startup's
-       "AddUSBHardware xhci.device 0" line adds it again. */
+       "USBAddHardware xhci.device 0" line adds it again. */
     if(pFindHardware(ps, name, unit)) {
         psdAddErrorMsg(RETURN_WARN, (STRPTR) libname,
                        "Hardware %s/%ld is already installed.", name, unit);
@@ -7312,12 +7312,6 @@ struct PsdUsbClass * (psdAddClass)(STRPTR name asm("a1"), ULONG vers asm("d0"), 
 
     KPRINTF(5, ("psdAddClass(%s, %ld)\n", name, vers));
 
-    /* Before any OpenLibrary(): ramlib would hand over Poseidon's loaded class of
-       the same name. */
-    if(pPoseidonLoaded(ps, name)) {
-        return NULL;
-    }
-
     while(*name) {
         if((cls = OpenLibrary(name, vers))) {
             break;
@@ -7521,8 +7515,8 @@ static struct PsdInterface * pFindIfBinding(struct PsdDevice *pd, struct PsdUsbC
 /*
  * Called the first time a class scan happens from a process after the stack
  * was started as a task (i.e. before DOS was available). Classes that flag
- * themselves with UCCA_AfterDOSRestart (bootmouse.class, bootkeyboard.class)
- * are only meant to bridge the gap until the full classes (hid.class) can be
+ * themselves with UCCA_AfterDOSRestart (bootmouse.usbclass, bootkeyboard.usbclass)
+ * are only meant to bridge the gap until the full classes (hid.usbclass) can be
  * loaded, so their bindings are released here to let the subsequent scan
  * hand the devices over. All classes are told about DOS being available.
  */
@@ -7594,7 +7588,7 @@ void (psdClassScan)(struct PsdBase * ps asm("a6"))
     /*
      * First scan from a process after the stack came up as a task before DOS:
      * the boot classes only bridged the gap, so release their bindings now and
-     * let the classes that are available by now (hid.class) take the devices
+     * let the classes that are available by now (hid.usbclass) take the devices
      * over. This used to happen only in psdParseCfg(), i.e. only when a saved
      * prefs file existed, leaving bootmouse/bootkeyboard in charge forever
      * on systems without one.
@@ -8394,12 +8388,44 @@ static BOOL pMigrateCfgString(struct PsdBase *ps, struct PsdIFFContext *pic, ULO
 }
 /* \\\ */
 
+/* /// "pMigrateClassName()" */
+/* Replace a trailing NEP_OLDCLASSSUFFIX of the class name or path held in chunk
+   chnkid of pic with NEP_CLASSSUFFIX ("hid.class" -> "hid.usbclass"). Idempotent:
+   a new name does not end in the old suffix. Returns TRUE if the chunk was
+   rewritten. */
+static BOOL pMigrateClassName(struct PsdBase *ps, struct PsdIFFContext *pic, ULONG chnkid)
+{
+    ULONG *chnk = pFindCfgChunk(ps, pic, chnkid);
+    if(!chnk) {
+        return FALSE;
+    }
+    STRPTR str = (STRPTR) &chnk[2];
+    ULONG stem = strlen((const char *) str);
+    if((stem <= sizeof(NEP_OLDCLASSSUFFIX) - 1) ||
+       stricmp((const char *) &str[stem - (sizeof(NEP_OLDCLASSSUFFIX) - 1)], NEP_OLDCLASSSUFFIX)) {
+        return FALSE;
+    }
+    stem -= sizeof(NEP_OLDCLASSSUFFIX) - 1;
+    /* built first: pAddStringChunk() compacts pic's chunk buffer over str */
+    STRPTR newstr = psdAllocVec(stem + sizeof(NEP_CLASSSUFFIX));
+    if(!newstr) {
+        return FALSE;
+    }
+    memcpy(newstr, str, stem);
+    strcpy((char *) &newstr[stem], NEP_CLASSSUFFIX);
+    BOOL done = pAddStringChunk(ps, pic, chnkid, newstr);
+    psdFreeVec(newstr);
+    return done;
+}
+/* \\\ */
+
 /* /// "pMigrateCfg()" */
-/* Rewrite what Poseidon prefs data carries over in Poseidon's names: the class
-   paths of the UCLS forms and the attach/detach sound paths of the stack form,
-   and the prefs editor's owner key on the per-device and per-interface data.
-   Idempotent, so it runs wherever outside data enters the config. Returns TRUE
-   if anything was rewritten. */
+/* Rewrite what older prefs data carries over in old names: the class paths of the
+   UCLS forms (drawer and suffix), the attach/detach sound paths of the stack form,
+   the prefs editor's owner key on the per-device and per-interface data, and the
+   class names that key per-class settings, class data on devices and interfaces,
+   and forced bindings. Idempotent, so it runs wherever outside data enters the
+   config. Returns TRUE if anything was rewritten. */
 static BOOL pMigrateCfg(struct PsdBase *ps)
 {
     BOOL changed = FALSE;
@@ -8409,16 +8435,24 @@ static BOOL pMigrateCfg(struct PsdBase *ps)
     if(pic) {
         for(struct PsdIFFContext *subpic = psdFindCfgForm(pic, IFFFORM_USBCLASS); subpic; subpic = psdNextCfgForm(subpic)) {
             changed |= pMigrateCfgString(ps, subpic, IFFCHNK_NAME, NEP_OLDCLASSDRAWER, NEP_CLASSDRAWER);
+            changed |= pMigrateClassName(ps, subpic, IFFCHNK_NAME);
         }
         changed |= pMigrateCfgString(ps, pic, IFFCHNK_INSERTSND, NEP_OLDPRESETDRAWER, NEP_PRESETDRAWER);
         changed |= pMigrateCfgString(ps, pic, IFFCHNK_REMOVESND, NEP_OLDPRESETDRAWER, NEP_PRESETDRAWER);
     }
+    for(struct PsdIFFContext *cls = psdFindCfgForm(NULL, IFFFORM_CLASSCFG); cls; cls = psdNextCfgForm(cls)) {
+        changed |= pMigrateClassName(ps, cls, IFFCHNK_OWNER);
+    }
     for(struct PsdIFFContext *dev = psdFindCfgForm(NULL, IFFFORM_DEVICECFG); dev; dev = psdNextCfgForm(dev)) {
+        changed |= pMigrateClassName(ps, dev, IFFCHNK_FORCEDBIND);
         for(struct PsdIFFContext *data = psdFindCfgForm(dev, IFFFORM_DEVCFGDATA); data; data = psdNextCfgForm(data)) {
             changed |= pMigrateCfgString(ps, data, IFFCHNK_OWNER, NEP_OLDPREFS_OWNER, NEP_PREFS_OWNER);
+            changed |= pMigrateClassName(ps, data, IFFCHNK_OWNER);
         }
         for(struct PsdIFFContext *data = psdFindCfgForm(dev, IFFFORM_IFCFGDATA); data; data = psdNextCfgForm(data)) {
             changed |= pMigrateCfgString(ps, data, IFFCHNK_OWNER, NEP_OLDPREFS_OWNER, NEP_PREFS_OWNER);
+            changed |= pMigrateClassName(ps, data, IFFCHNK_OWNER);
+            changed |= pMigrateClassName(ps, data, IFFCHNK_FORCEDBIND);
         }
     }
     pUnlockSem(ps, &ps->ps_ConfigLock);
@@ -8427,7 +8461,7 @@ static BOOL pMigrateCfg(struct PsdBase *ps)
 /* \\\ */
 
 /* /// "pLoadCfgFile()" */
-/* Load and apply one prefs file, migrating Poseidon names first (pMigrateCfg()).
+/* Load and apply one prefs file, migrating old names first (pMigrateCfg()).
    Returns RETURN_OK, RETURN_WARN (no such file) or RETURN_ERROR (not a usable
    prefs file). */
 static UWORD pLoadCfgFile(struct PsdBase *ps, STRPTR filename)
@@ -8960,7 +8994,7 @@ void (psdParseCfg)(struct PsdBase * ps asm("a6"))
     if(nodos && ps->ps_GlobalCfg->pgc_BootDelay) {
         // wait for hubs to settle
         psdDelayMS(1000);
-        puc = (struct PsdUsbClass *) FindName(&ps->ps_Classes, "massstorage.class");
+        puc = (struct PsdUsbClass *) FindName(&ps->ps_Classes, "massstorage.usbclass");
         if(puc && puc->puc_UseCnt) {
             psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
                            "Delaying further execution by %ld second(s) (boot delay).",

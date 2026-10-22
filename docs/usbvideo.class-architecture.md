@@ -1,15 +1,15 @@
-# usbvideo.class - Architecture
+# usbvideo.usbclass - Architecture
 
-> **Scope:** `usbvideo.class`, the USB Video Class driver (UVC 1.0, 1.1 and 1.5), the Exec device
+> **Scope:** `usbvideo.usbclass`, the USB Video Class driver (UVC 1.0, 1.1 and 1.5), the Exec device
 > it carries, `usbvideo.device`, and its clients: the VHI driver `usbvideo.vhi` and the tools
-> `UVCTool`/`UVCTest`. It is a client of `neptune.library`; read
+> `USBVideo`/`USBVideoTest`. It is a client of `neptune.library`; read
 > [neptune.library-architecture.md](neptune.library-architecture.md) first (class binding §5.5,
 > pipes §5.6, RT-ISO §5.7, power policy §5.10). It follows
 > [usbaudio.class-architecture.md](usbaudio.class-architecture.md) for binding and RT-ISO use;
 > the clock-driven iso hooks it relies on are in
 > [neptune-context-hcd-abi.md](neptune-context-hcd-abi.md) §10.3. Sources: `classes/video/`,
 > `include/devices/usb_video.h` (wire), `include/devices/usbvideodevice.h` (public), `vhi/`,
-> `tools/UVCTool.c`, `UVCTest.c`, `uvc_client.c`.
+> `tools/USBVideo.c`, `USBVideoTest.c`, `uvc_client.c`.
 >
 > This document describes structure, behaviour and the rules that keep it correct. It names
 > functions as anchors; the code is the reference for wire and field layouts, timings and retry
@@ -21,7 +21,7 @@
 
 ## 1. Purpose
 
-`usbvideo.class` makes UVC cameras usable to Amiga programs. It has four jobs:
+`usbvideo.usbclass` makes UVC cameras usable to Amiga programs. It has four jobs:
 
 1. **Model the function.** Bind a video function through its VideoControl interface and build an
    immutable model from its descriptors: the terminal/unit topology and, per VideoStreaming
@@ -50,9 +50,9 @@ interfaces are used through that binding and never claimed.
 flowchart TB
     VAPP["VHI programs, e.g. cAMIra"]
     VHI["usbvideo.vhi - VHI driver, no USB code"]
-    TOOLS["UVCTool, UVCTest"]
+    TOOLS["USBVideo, USBVideoTest"]
     NUSB["Neptune USB - settings button"]
-    subgraph CLS["usbvideo.class"]
+    subgraph CLS["usbvideo.usbclass"]
         DEV["usbvideo.device - one unit per capture stream"]
         SUB["binding subtask - one per camera"]
         GUI["settings window task"]
@@ -60,7 +60,7 @@ flowchart TB
     end
     CORE["neptune.library"]
     HCD["HCD (xhci.device) - isochronous IN path"]
-    AUD["usbaudio.class - the camera's microphone"]
+    AUD["usbaudio.usbclass - the camera's microphone"]
 
     VAPP -->|"vhi_api()"| VHI
     VHI -->|"OpenDevice, CMD_READ, NSCMD_UV_*"| DEV
@@ -83,7 +83,7 @@ flowchart TB
 - **Upwards** it provides `usbvideo.device`, made in `libInit` and added to the system list as the
   massstorage, serial and ethernet classes do, and a per-camera settings window for Neptune USB.
 - **Sideways** it calls no other class. A composite camera's audio interfaces go to
-  `usbaudio.class`; the two share the camera's EP0 (rule 14).
+  `usbaudio.usbclass`; the two share the camera's EP0 (rule 14).
 
 ---
 
@@ -447,7 +447,7 @@ Details: [uvc/notes/vhi-notes.md](uvc/notes/vhi-notes.md).
 - **No decoder**: cAMIra takes `VHI_JPEG`. A camera without MJPEG gets YUY2 sorted into the planes
   of `VHI_YUV_422` without arithmetic (never run).
 
-**Tools**: `UVCTool` is the user tool (info, modes, frames or an H.264 stream to files); `UVCTest`
+**Tools**: `USBVideo` is the user tool (info, modes, frames or an H.264 stream to files); `USBVideoTest`
 is the test bench, built but not shipped (each test ends in PASS or FAIL). Both use
 `tools/uvc_client.c` (camera, capture loop, files) and `vhi/mjpegdht.h` (standard Huffman tables,
 frame checks).
@@ -493,7 +493,7 @@ Each rule exists because breaking it caused, or would cause, a real failure.
 13. **Stored controls are rewritten after every successful start.** Cameras drop values at
     stream start (the C930e lost a manual exposure); a few writes cost nothing on one that does
     not. Not while the window is open: the camera is being set by hand.
-14. **A composite camera's EP0 is shared and refusals are normal.** `usbaudio.class` and this
+14. **A composite camera's EP0 is shared and refusals are normal.** `usbaudio.usbclass` and this
     class both send requests a camera may stall. That is harmless only because the HCD retires
     just the transfer a halt happened on; aborting everything on the endpoint would let one
     class's refusal kill the other's request.
@@ -563,7 +563,7 @@ UVC 1.1 H.264 unit; VHI (`include/vhi/vhi.h`). The class is not in the Kickstart
 
 **Left out by decision:** pixels (decoding, conversion, scaling, display); video output,
 display terminals and the Media Transport Terminal; formats without frames (DV, stream-based,
-MPEG-2 TS - no row, no modes); sound and time (the microphone is `usbaudio.class`'s; no clock
+MPEG-2 TS - no row, no modes); sound and time (the microphone is `usbaudio.usbclass`'s; no clock
 recovery, no A/V sync); non-UVC cameras (makers' protocols, Apple iSight framing); a second
 configuration (Neptune uses the first, so a camera with 1.0 and 1.5 configurations appears in its
 older personality); makers' extension-unit controls in the window (raw requests reach them).

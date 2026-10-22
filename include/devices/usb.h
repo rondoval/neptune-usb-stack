@@ -4,6 +4,7 @@
 **	$VER: usb.h 3.2 (25.11.2025)
 **
 **	usb definitions include file
+**	USB standard descriptors and requests, as used by Neptune.
 **
 **	(C) Copyright 2007-2025 The AROS Dev Team.
 **	(C) Copyright 2002-2007 Chris Hodges

@@ -26,7 +26,7 @@
 #include <devices/usb.h>
 #include <devices/usbhardware.h>
 #include <devices/usb_massstorage.h>
-#include <libraries/usbclass.h>
+#include <libraries/neptune_class.h>
 
 #include <string.h>
 #include <stddef.h>

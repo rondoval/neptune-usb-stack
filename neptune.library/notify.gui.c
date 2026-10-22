@@ -40,7 +40,7 @@ static inline struct Library *_notify_mui_base(void)
 #include <proto/datatypes.h>
 #include <proto/intuition.h>
 #include <proto/utility.h>
-#include <proto/usbclass.h>
+#include <proto/neptune_class.h>
 
 #include "numtostr.h"
 

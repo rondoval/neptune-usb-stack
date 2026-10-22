@@ -1,11 +1,11 @@
 #ifndef NEPTUNE_OTHERSTACK_H
 #define NEPTUNE_OTHERSTACK_H
 /*
- * One USB stack at a time. Neptune does not start while Poseidon is loaded: its
- * classes carry the same file names, so ramlib would hand Neptune Poseidon's
- * hid.class, and it may be driving the same host controller. Checked by
- * USBStart, USBAddHardware, USBAddClasses, the ROM startup and, for any other
- * caller, psdParseCfg(), psdAddClass() and psdAddHardware().
+ * One USB stack at a time. Neptune does not start while Poseidon is loaded: two
+ * stacks must never drive the same host controller (both would open the same
+ * host-controller driver, e.g. xhci.device, for it). Checked by USBStart, USBAddHardware, the ROM
+ * startup and, for any other caller, psdParseCfg() and psdAddHardware(). Class
+ * drivers are not refused: their file names differ from Poseidon's (.usbclass).
  */
 
 #include <exec/execbase.h>

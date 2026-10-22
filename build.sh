@@ -199,14 +199,14 @@ copy_one() {                               # copy_one <src-under-build> <amiga-d
 
 deploy_group() { local e; for e in "$@"; do copy_one "${e%%|*}" "${e#*|}"; done; }
 
-# Every built class under build/classes/*/*.class -> DEVS:USBClasses/<file> (output names
-# differ from dir names - pegasus.class, dm9601eth.class, usbaudio.class, ... - so glob the
+# Every built class under build/classes/*/*.usbclass -> DEVS:USBClasses/<file> (output names
+# differ from dir names - pegasus.usbclass, dm9601eth.usbclass, usbaudio.usbclass, ... - so glob the
 # actual artifacts rather than the source-dir names).
 deploy_classes() {
     local f rel; local -a list
-    mapfile -t list < <(find "$BUILD_DIR/classes" -name '*.class' -type f 2>/dev/null | sort)
+    mapfile -t list < <(find "$BUILD_DIR/classes" -name '*.usbclass' -type f 2>/dev/null | sort)
     if (( ${#list[@]} == 0 )); then
-        printf '  \e[31mMISS\e[0m %-42s (no classes built - run --build?)\n' "classes/*/*.class" >&2
+        printf '  \e[31mMISS\e[0m %-42s (no classes built - run --build?)\n' "classes/*/*.usbclass" >&2
         fail=$((fail + 1)); return
     fi
     for f in "${list[@]}"; do
@@ -306,7 +306,7 @@ if (( DO_UPLOAD )); then
         echo "dry run - nothing copied."
     else
         echo "done: $ok copied, $fail failed."
-        echo "Note: neptune.library / *.class are loaded into memory at boot - reboot"
+        echo "Note: neptune.library / *.usbclass are loaded into memory at boot - reboot"
         echo "      (or unload the stack and re-run USBStart / USBAddClasses) to pick up changes."
     fi
 fi

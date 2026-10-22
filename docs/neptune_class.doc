@@ -1,18 +1,18 @@
 TABLE OF CONTENTS
 
-usbclass/--background--
-usbclass/usbAttemptDeviceBinding
-usbclass/usbAttemptInterfaceBinding
-usbclass/usbDoMethod
-usbclass/usbForceDeviceBinding
-usbclass/usbForceInterfaceBinding
-usbclass/usbGetAttrs
-usbclass/usbReleaseDeviceBinding
-usbclass/usbReleaseInterfaceBinding
-usbclass/usbSetAttrs
+neptune_class/--background--
+neptune_class/usbAttemptDeviceBinding
+neptune_class/usbAttemptInterfaceBinding
+neptune_class/usbDoMethod
+neptune_class/usbForceDeviceBinding
+neptune_class/usbForceInterfaceBinding
+neptune_class/usbGetAttrs
+neptune_class/usbReleaseDeviceBinding
+neptune_class/usbReleaseInterfaceBinding
+neptune_class/usbSetAttrs
 
 
-usbclass/--background--                               usbclass/--background--
+neptune_class/--background--                               neptune_class/--background--
 
    PURPOSE
         USB classes in the sense of the Poseidon stack environment, are
@@ -56,14 +56,14 @@ usbclass/usbSetAttrs
         A class driver should spawn a subtask for each instance of the
         functionality added. For example, as there can be as many mice on the
         USB as the users connects, there will be multiple instances of the
-        bootmouse.class tasks running.
+        bootmouse.usbclass tasks running.
 
         Whenever the device gets removed, the poseidon.library will ask you
         to remove your binding to it and you will properly behave and release
         the binding. Note that your library does not need to free all your
         resources on this operation. This allows you suspend your
         functionality and return it, when the device gets plugged in again.
-        For example, the printer.class keeps the information about every
+        For example, the printer.usbclass keeps the information about every
         printer connected and maps it back to the same unit number whenever it
         is reconnected. The data is only freed on the expunge of the class.
 
@@ -119,7 +119,7 @@ usbclass/usbSetAttrs
           usbGetAttrs(), headed NEPTUNE.
 
 
-usbclass/usbAttemptDeviceBinding             usbclass/usbAttemptDeviceBinding
+neptune_class/usbAttemptDeviceBinding             neptune_class/usbAttemptDeviceBinding
 
    NAME
         usbAttemptDeviceBinding -- establish device binding if possible
@@ -166,7 +166,7 @@ usbclass/usbSetAttrs
         usbReleaseDeviceBinding(), usbForceDeviceBinding()
 
 
-usbclass/usbAttemptInterfaceBinding       usbclass/usbAttemptInterfaceBinding
+neptune_class/usbAttemptInterfaceBinding       neptune_class/usbAttemptInterfaceBinding
 
    NAME
         usbAttemptInterfaceBinding -- establish interface binding if possible
@@ -213,7 +213,7 @@ usbclass/usbSetAttrs
         usbReleaseInterfaceBinding(), usbForceInterfaceBinding()
 
 
-usbclass/usbDoMethod                                     usbclass/usbDoMethod
+neptune_class/usbDoMethod                                     neptune_class/usbDoMethod
 
    NAME
         usbDoMethodA -- perform a class function
@@ -370,7 +370,7 @@ usbclass/usbSetAttrs
 
         UCM_LocaleAvailableEvent, UCM_SoftRestart, UCM_HardRestart
 
-            Defined in libraries/usbclass.h; no parameters.
+            Defined in libraries/neptune_class.h; no parameters.
 
         UCM_AttemptSuspendDevice, UCM_AttemptResumeDevice
 
@@ -385,7 +385,7 @@ usbclass/usbSetAttrs
         UCM_Hub... methods
 
             Methods 0x0f01 and up are for hub classes only and are listed in
-            libraries/usbclass.h.
+            libraries/neptune_class.h.
 
    NEPTUNE
         Neptune never sends UCM_LocaleAvailableEvent, UCM_SoftRestart or
@@ -432,7 +432,7 @@ usbclass/usbSetAttrs
         The list of methods may grow in future.
 
    INPUTS
-        methodid - numeric method id a specific in libraries/usbclass.h
+        methodid - numeric method id a specific in libraries/neptune_class.h
         methoddata - the message packet to send according to the method id
 
    RESULT
@@ -442,7 +442,7 @@ usbclass/usbSetAttrs
         usbGetAttrs(), usbSetAttrs()
 
 
-usbclass/usbForceDeviceBinding                 usbclass/usbForceDeviceBinding
+neptune_class/usbForceDeviceBinding                 neptune_class/usbForceDeviceBinding
 
    NAME
         usbForceDeviceBinding -- force device binding if possible
@@ -485,7 +485,7 @@ usbclass/usbSetAttrs
         usbAttemptDeviceBinding(), usbReleaseDeviceBinding()
 
 
-usbclass/usbForceInterfaceBinding           usbclass/usbForceInterfaceBinding
+neptune_class/usbForceInterfaceBinding           neptune_class/usbForceInterfaceBinding
 
    NAME
         usbForceInterfaceBinding -- force interface binding if possible
@@ -528,7 +528,7 @@ usbclass/usbSetAttrs
         usbAttemptInterfaceBinding(), usbReleaseInterfaceBinding()
 
 
-usbclass/usbGetAttrs                                     usbclass/usbGetAttrs
+neptune_class/usbGetAttrs                                     neptune_class/usbGetAttrs
 
    NAME
         usbGetAttrsA -- get information from an internal class structure
@@ -557,7 +557,7 @@ usbclass/usbSetAttrs
 
    INPUTS
         type - describes the type of the structure passed.
-               See libraries/usbclass.h for details.
+               See libraries/neptune_class.h for details.
         usbstruct - pointer to the system structure on which information
                     should be gathered. Can be NULL only for UGA_CLASS.
         taglist - pointer to TagItem list, terminated by TAG_END.
@@ -570,8 +570,8 @@ usbclass/usbSetAttrs
             between -128 and 127. The higher the priority, the earlier the
             class gets to attempt a binding. This is important if different
             classes lock to the same interfaces or devices, but have varying
-            degree of functionality and availability (e.g. hid.class versus
-            bootmouse.class or bootkeyboard.class).
+            degree of functionality and availability (e.g. hid.usbclass versus
+            bootmouse.usbclass or bootkeyboard.usbclass).
         UCCA_Description (STRPTR) - String to display in Trident, describing
             the basic features and intention of the class.
         UCCA_HasClassCfgGUI (BOOL) - Returns TRUE, if the class has a global
@@ -608,7 +608,7 @@ usbclass/usbSetAttrs
         psdSetAttrs(), psdNumToStr()
 
 
-usbclass/usbReleaseDeviceBinding   usbclass/usbReleaseDeviceBinding
+neptune_class/usbReleaseDeviceBinding   neptune_class/usbReleaseDeviceBinding
 
    NAME
         usbReleaseDeviceBinding -- release a previously bound device
@@ -647,7 +647,7 @@ usbclass/usbSetAttrs
         usbAttemptDeviceBinding()
 
 
-usbclass/usbReleaseInterfaceBinding       usbclass/usbReleaseInterfaceBinding
+neptune_class/usbReleaseInterfaceBinding       neptune_class/usbReleaseInterfaceBinding
 
    NAME
         usbReleaseInterfaceBinding -- release a previously bound interface
@@ -687,7 +687,7 @@ usbclass/usbSetAttrs
         usbAttemptInterfaceBinding()
 
 
-usbclass/usbSetAttrs                                     usbclass/usbSetAttrs
+neptune_class/usbSetAttrs                                     neptune_class/usbSetAttrs
 
    NAME
         usbSetAttrsA -- change fields of an internal class structure
@@ -716,7 +716,7 @@ usbclass/usbSetAttrs
 
    INPUTS
         type - describes the type of the structure passed.
-               See libraries/usbclass.h for details.
+               See libraries/neptune_class.h for details.
         usbstruct - pointer to the system structure on which information
                     should be changed. Can be NULL only for UGA_CLASS.
         taglist - pointer to TagItem list, terminated by TAG_END.

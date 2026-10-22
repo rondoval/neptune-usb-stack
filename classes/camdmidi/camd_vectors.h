@@ -1,4 +1,4 @@
-/* camd_vectors.h - camdusbmidi.class's extra library vectors, injected into the
+/* camd_vectors.h - camdusbmidi.usbclass's extra library vectors, injected into the
  * shared class skeleton's funcTable via -DCLASS_VECTORS_HDR (see classes/class_main.c).
  *
  * The original genmodule .conf declared, after the 3 usbclass vectors:

@@ -24,14 +24,14 @@
 #include <workbench/workbench.h>
 #include <devices/timer.h>
 #include <libraries/neptune.h>
-#include <libraries/usbclass.h>
+#include <libraries/neptune_class.h>
 
 #include <proto/exec.h>
 #include <proto/intuition.h>
 #include <proto/wb.h>
 #include <proto/locale.h>
 #include <proto/neptune.h>
-#include <proto/usbclass.h>
+#include <proto/neptune_class.h>
 
 #include <neptune_version.h>
 

@@ -43,6 +43,11 @@ int libInit(struct NepEthBase * nh)
     struct NepClassEth *ncp;
     struct NepEthBase *ret = NULL;
 
+    if(nDevNameTaken(DEVNAME))
+    {
+        return FALSE;
+    }
+
     KPRINTF(10, ("libInit nh: 0x%08lx SysBase: 0x%08lx\n", (void *) nh, (void *) EXEC_BASE_NAME));
 
     nh->nh_UtilityBase = OpenLibrary("utility.library", 39);
@@ -115,7 +120,7 @@ int libExpunge(struct NepEthBase * nh)
         nh->nh_DevBase->np_Library.lib_OpenCnt--;
         RemDevice((struct Device *) nh->nh_DevBase);
 
-        KPRINTF(5, ("libExpunge: Unloading done! cdceth.class expunged!\n\n"));
+        KPRINTF(5, ("libExpunge: Unloading done! cdceth.usbclass expunged!\n\n"));
     } else {
         KPRINTF(5, ("libExpunge: Could not expunge, LIBF_DELEXP set!\n"));
         return(FALSE);
@@ -308,7 +313,7 @@ struct NepClassEth * usbForceDeviceBinding(struct NepEthBase *nh, struct PsdDevi
         ncp->ncp_UnitNo = unitno;
         Permit();
 
-        psdSafeRawDoFmt(buf, 64, "cdceth.class<%08lx>", ncp);
+        psdSafeRawDoFmt(buf, 64, CLASS_NAME "<%08lx>", ncp);
         ncp->ncp_ReadySignal = SIGB_SINGLE;
         ncp->ncp_ReadySigTask = FindTask(NULL);
         SetSignal(0, SIGF_SINGLE);
@@ -1918,7 +1923,7 @@ void nGUITask()
         MUIA_Application_Version    , (IPTR)VERSION_STRING,
         MUIA_Application_Copyright  , (IPTR)"2025 The AROS Development Team.",
         MUIA_Application_Author     , (IPTR)"The AROS Development Team",
-        MUIA_Application_Description, (IPTR)"Settings for the cdceth.class",
+        MUIA_Application_Description, (IPTR)"Settings for the " CLASS_NAME,
         MUIA_Application_Base       , (IPTR)"CDCETH",
         MUIA_Application_HelpFile   , (IPTR)"HELP:Neptune.guide",
         MUIA_Application_Menustrip  , (IPTR)MenustripObject,

@@ -25,16 +25,26 @@ At the request of the AROS Development Team, this project no longer presents its
 | | 6.0-6.2 | 6.3 |
 |---|---|---|
 | Library | `LIBS:poseidon.library` | `LIBS:neptune.library` |
-| Class drivers | `SYS:Classes/USB/` | `DEVS:USBClasses/` |
+| Class drivers | `SYS:Classes/USB/<name>.class` | `DEVS:USBClasses/<name>.usbclass` |
 | Control panel | `SYS:Prefs/Trident` | `SYS:Prefs/NeptuneUSB` ("Neptune USB") |
 | Commands | `PsdStackLoader`, `PsdDevLister`, `PsdErrorlog` | `USBStart`, `USBList`, `USBErrorlog` |
+| | `AddUSBHardware`, `AddUSBClasses` | `USBAddHardware`, `USBAddClasses` |
+| Optional tools | `DRadioTool`, `PencamTool`, `PowManTool`, `RocketTool`, `SonixcamTool`, `UPSTool` | `USBRadio`, `USBPencam`, `USBPowMan`, `USBRocket`, `USBSonixcam`, `USBUPS` |
 | Settings | `ENV(ARC):Sys/poseidon.prefs` | `ENV(ARC):Sys/neptune.prefs` |
 | Sounds | `SYS:Prefs/Presets/Poseidon/` | `SYS:Prefs/Presets/Neptune/` |
 | Device popups | "Poseidon Popups" (PoPo) | "USB device notifications" |
 | Settings-file datatype | `PSD` | `Neptune` |
 | Archive | `Poseidon-<ver>-<cpu>.lha` | `Neptune-<ver>-<cpu>.lha` |
 
-`AddUSBHardware`, `AddUSBClasses`, `USBEject` and the optional tools keep their names.
+Every Neptune command now starts with `USB`, and every class driver ends in `.usbclass`, so
+installing Neptune no longer replaces a Poseidon 4.x command, tool or class, and neither stack
+can pick up the other's classes.
+
+**One USB stack at a time:** Neptune does not start its USB controllers while Poseidon is
+loaded. `USBStart` and `USBAddHardware` say why and stop, and so does Neptune USB in its log;
+reboot without Poseidon, or quit it and run `Avail FLUSH`. A Neptune class whose device
+(`usbscsi.device`, `usbparallel.device`, ...) another USB stack already provides does not
+start, and the log says so.
 
 **What the installer does:**
 
@@ -42,23 +52,30 @@ At the request of the AROS Development Team, this project no longer presents its
   started next to Neptune, and adds a `Neptune USB Stack` block if you ask for autostart.
 * It offers to remove the 6.0-6.2 files listed above. Only files that report version 6 or
   newer are removed, so a classic Poseidon is never touched, and `poseidon.prefs` is kept.
+* It removes the 6.0-6.2 copies of `AddUSBHardware`, `AddUSBClasses` and the optional tools,
+  again only those that report version 6 or newer. If an earlier installation overwrote a
+  Poseidon 4.x's `AddUSBHardware` or `AddUSBClasses`, copy them back from the 4.x archive.
 * It copies sounds you added to `SYS:Prefs/Presets/Poseidon/` into the new drawer.
 
 **Your settings:** on first start, if there is no `neptune.prefs`, Neptune imports
-`poseidon.prefs`, moves the class and sound paths to the new drawers, and saves the result
-as `neptune.prefs`. Loading an old settings file by hand converts it the same way.
+`poseidon.prefs`, moves the class and sound paths to the new drawers and class names, and saves
+the result as `neptune.prefs`. Loading an old settings file by hand converts it the same way.
 Neptune USB's saved window positions start afresh, because the program's name changed.
 
 **Programmers:** the library is opened as `NEPTUNENAME` (`"neptune.library"`), version
 `NEPTUNE_LIB_MIN_VERSION`, with `<libraries/neptune.h>` and `<proto/neptune.h>`; the base is
 `NeptuneBase`. The `psd*()` function names, structures and tags are unchanged.
+The class protocol header is now `<libraries/neptune_class.h>`, with
+`<proto/neptune_class.h>` (was `usbclass.h`, the name PoseidonDev uses); the base
+`UsbClsBase`, the `usb*()` functions, tags and methods are unchanged. A class is built as
+`<name>.usbclass`; file, romtag and library name must agree.
 Classes built for 6.0-6.2 open `poseidon.library` and must be rebuilt.
 
 The notes for 6.0-6.2 below keep the names those releases used.
 
 ## USB cameras
 
-The new `usbvideo.class` drives webcams that follow the USB Video Class standard (UVC 1.0,
+The new `usbvideo.usbclass` drives webcams that follow the USB Video Class standard (UVC 1.0,
 1.1 and 1.5). It needs `xhci.device` 6.4 from the Emu68 driver stack on a Pi 4 or CM4.
 Tested with a Logitech C930e, up to 1920x1080 at 30 frames a second.
 
@@ -69,8 +86,8 @@ Tested with a Logitech C930e, up to 1920x1080 at 30 frames a second.
   `LIBS:VHI/`. Each camera is one input.
 * **Camera settings** in Neptune USB: brightness, exposure, focus, white balance and the other
   standard controls, applied at once and saved per camera.
-* **`UVCTool`** (optional tools) lists a camera's modes and saves pictures or H.264 video,
-  e.g. `UVCTool TO=RAM:shot`.
+* **`USBVideo`** (optional tools) lists a camera's modes and saves pictures or H.264 video,
+  e.g. `USBVideo TO=RAM:shot`.
 * **The camera's microphone** shows up as an AHI recording mode, and an idle camera is
   suspended when power saving is on.
 

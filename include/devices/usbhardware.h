@@ -5,6 +5,8 @@
 **
 **	standard usb hardware device include file
 **  USB 2.0 only, 3.0 support removed
+**  Classic V1/V2 IOUsbHWReq, as used by Neptune; Poseidon's V3 interface
+**  is not defined here.
 **
 **	(C) Copyright 2002-2007 Chris Hodges
 **	(C) Copyright 2007-2026 AROS Development Team

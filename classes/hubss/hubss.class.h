@@ -25,7 +25,7 @@ struct NepHubSSBase {
 
 struct NepClassHubSS {
     struct Node             nch_Node;         /* Node linkage */
-    struct NepHubSSBase     *nch_HubBase;      /* hubss.class base */
+    struct NepHubSSBase     *nch_HubBase;      /* hubss.usbclass base */
     struct Library          *nch_Base;         /* neptune.library base */
     struct PsdHardware      *nch_Hardware;     /* Up linkage */
     struct PsdDevice        *nch_Device;       /* Up linkage */
@@ -67,7 +67,7 @@ struct NepClassHubSS {
 
 struct NepHubSSMsg {
     struct Message          nhm_Msg;          /* Message body */
-    ULONG                   nhm_MethodID;     /* The method ID (see usbclass.h) */
+    ULONG                   nhm_MethodID;     /* The method ID (see neptune_class.h) */
     IPTR                    *nhm_Params;       /* Pointer to parameters of the method (all of them!) */
     IPTR                    nhm_Result;       /* Result of call */
 };

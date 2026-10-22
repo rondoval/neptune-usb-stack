@@ -1,7 +1,7 @@
 #ifndef DEVICES_USBVIDEODEVICE_H
 #define DEVICES_USBVIDEODEVICE_H
 /*
-**	usbvideodevice.h - usbvideo.device, the application interface of usbvideo.class
+**	usbvideodevice.h - usbvideo.device, the application interface of usbvideo.usbclass
 **
 **	One unit is one capture stream of one camera. Units are numbered from 0
 **	and opened exclusively. A camera that is unplugged and comes back gets

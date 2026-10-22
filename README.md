@@ -37,7 +37,7 @@ Not included: the *host-controller driver* for your USB hardware - see
 - **Kickstart and Workbench 3.1 or newer** - a few details differ below 3.2, see
   [Known limitations](#known-limitations).
 - A **68020 or better**; no FPU needed.
-- A **USB host-controller driver**. `xhci.device` 6.x and 5.x from the
+- A **USB host-controller driver**. `xhci.device` (6.x) and `xhci-legacy.device` (5.x) from the
   [Emu68 driver stack](https://github.com/rondoval/emu68-driver-stack) (PiStorm/Emu68 on a
   Raspberry Pi 4 or CM4) are confirmed working.
 - **Installer 43.3 or newer** for the `Install` script (Aminet `util/misc/Installer-43_3.lha`;
@@ -53,7 +53,7 @@ interfaces it speaks:
 
 | | **Legacy interface** | **Context interface** |
 |---|---|---|
-| Spoken by | Classic Amiga USB cards (Deneb, Subway, …), `xhci.device` **5.x** | `xhci.device` **6.x** |
+| Spoken by | Classic Amiga USB cards (Deneb, Subway, …), `xhci-legacy.device` **5.x** | `xhci.device` **6.x** |
 | SuperSpeed devices | seen as USB 2.0 | handled as SuperSpeed |
 | SuperSpeed (USB 3) hubs | no | yes |
 | UAS mass storage | one command at a time | bulk streams, several commands in flight |
@@ -79,6 +79,12 @@ Neptune is an incompatible fork:
 - **Settings.** Neptune keeps its settings in `ENVARC:Sys/neptune.prefs`. On first start,
   if that file does not exist, it imports `poseidon.prefs` once; `poseidon.prefs` itself is
   never changed.
+- **Names.** Neptune's commands and tools all start with `USB` (`USBStart`,
+  `USBAddHardware`, `USBRadio`, ...) and its class drivers end in `.usbclass`
+  (`hid.usbclass`, ...), so installing Neptune replaces no Poseidon 4.x command, tool or
+  class.
+- **One stack at a time.** Neptune does not start its USB controllers while Poseidon is
+  loaded, and says why in its log; reboot without Poseidon, or quit it and run `Avail FLUSH`.
 
 ## Download and install
 
@@ -145,15 +151,15 @@ In **Neptune USB** (`SYS:Prefs/NeptuneUSB`):
 ## Tools
 
 - **USBStart** - starts the stack (the one startup command).
-- **AddUSBHardware**, **AddUSBClasses** - attach or remove controllers and classes by hand.
+- **USBAddHardware**, **USBAddClasses** - attach or remove controllers and classes by hand.
 - **USBList** - lists connected USB devices.
 - **USBErrorlog** - prints the stack's error log.
 - **USBEject** (optional, `SYS:WBStartup/`) - a Workbench **USB** menu with an *Eject* item
   per drive. It flushes and unmounts every volume (refusing while files are open), then
   stops the drive and confirms it is safe to unplug. Under a Workbench replacement the items
   appear in the **Tools** menu instead.
-- Optional per-gadget tools in `SYS:Tools/`: `DRadioTool`, `PencamTool`, `SonixcamTool`,
-  `RocketTool`, `PowManTool`, `UPSTool`, `UVCTool`.
+- Optional per-gadget tools in `SYS:Tools/`: `USBRadio`, `USBPencam`, `USBSonixcam`,
+  `USBRocket`, `USBPowMan`, `USBUPS`, `USBVideo`.
 - `usbvideo.vhi` in `LIBS:VHI/` lets VHI programs such as cAMIra use USB webcams; camera
   controls are in the camera's settings window in Neptune USB.
 
@@ -161,8 +167,8 @@ In **Neptune USB** (`SYS:Prefs/NeptuneUSB`):
 
 - **BOT read throughput** is below what the drive can do (unaligned buffers copied on the
   driver side); a fix is in progress. UAS drives are not affected.
-- **Not tested with classic Amiga USB cards.** The legacy interface works (`xhci.device` 5.x
-  runs on it), but no Deneb, Subway or similar card has been tried.
+- **Not tested with classic Amiga USB cards.** The legacy interface works (`xhci-legacy.device`
+  5.x runs on it), but no Deneb, Subway or similar card has been tried.
 - **Below OS 3.2, held keys do not auto-repeat** - `input.device` gained the command that
   drives repeat (`IND_ADDEVENT`) in V47.
 - **Below `workbench.library` 45**, USBEject's items sit flat in the Tools menu.
@@ -223,7 +229,7 @@ cmake --build build --target package
 | Path | Contents |
 |---|---|
 | `neptune.library/` | The stack core. |
-| `usbclass.library/` | The base meta-class every class inherits (ABI headers). |
+| `neptune_class/` | The base meta-class every class inherits (ABI headers). |
 | `classes/` | The class drivers. |
 | `neptuneusb/` | Neptune USB, the MUI control panel, and its translations. |
 | `c/`, `tools/`, `usbeject/`, `vhi/` | Commands, gadget tools, USBEject, the VHI driver. |
@@ -243,4 +249,4 @@ In [`docs/`](docs/): the architecture documents - start with
 class (`hub`, `hubss`, `hid`, `massstorage`, `usbaudio`, `usbvideo`); the context interface
 Neptune speaks to `xhci.device`, [neptune-context-hcd-abi.md](docs/neptune-context-hcd-abi.md);
 the [porting playbook](docs/porting-playbook.md); and the reference manuals `neptune.doc`,
-`usbclass.doc` and `usbhardware.doc`.
+`neptune_class.doc` and `usbhardware.doc`.

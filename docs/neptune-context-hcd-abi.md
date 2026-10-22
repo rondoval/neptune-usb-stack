@@ -442,7 +442,7 @@ struct UhcdSetLinkPower {
   (devices reject them until Configured, so the stack sequences them after the wire
   `SET_CONFIGURATION`). For a device behind an **external hub**, the downstream-port U1/U2 timeouts are
   set with hub-class `SET_FEATURE(PORT_U1/U2_TIMEOUT)` requests - again normal wire transfers, issued by
-  `hub.class`, not this op.
+  `hub.usbclass`, not this op.
 
 * **(c) A withheld policy is a teardown request, not "arm nothing".** The op is re-issue-safe in
   *both* directions, and the stack uses that: when the user turns link power management off, it
@@ -544,7 +544,7 @@ sequenceDiagram
     POS->>HCD: NSCMD_USB_ATTACH, done hook
     HCD-->>POS: hcd context + submit / ctrl_submit / abort entries
 
-    note over POS: hub.class reports a new device on parent P, port N, speed S
+    note over POS: hub.usbclass reports a new device on parent P, port N, speed S
     POS->>HCD: NSCMD_USB_CREATE_DEVICE, parent P, port N, speed S
     HCD->>DEV: Enable Slot, Address Device, wire SET_ADDRESS done by controller
     HCD-->>POS: device handle H + EP0 token, device is addressed
@@ -570,7 +570,7 @@ Step by step (each exchange of the diagram, with the data that flows and the xHC
    transfer-completion hook for the HCD's `submit`/`ctrl_submit`/`abort` entries plus the opaque HCD
    context (§5, §6). Every transfer below is a direct call through these entries, completing through
    the hook.
-2. **Detect (hub.class).** A device appears on a port. `hub.class` powers and resets the port, reads
+2. **Detect (hub.usbclass).** A device appears on a port. `hub.usbclass` powers and resets the port, reads
    the post-reset status to learn the **speed**, and reports the new device's **parent handle** (the
    hub it sits under) and **port number** to the enumerator. No USB address is chosen by anyone.
 3. **Create.** The enumerator issues `NSCMD_USB_CREATE_DEVICE(parent=P, port=N, speed=S)`. The HCD
@@ -633,7 +633,7 @@ than in a driver-private shadow state machine.
 
 * **Hubs** are devices that need two extra slot-context facts xHCI requires before their children can
   be addressed: the **hub bit + port count** and the **TT think-time / multi-TT**. `NSCMD_USB_UPDATE_HUB`
-  supplies them once, after the stack reads the hub descriptor (it already does, in `hub.class`).
+  supplies them once, after the stack reads the hub descriptor (it already does, in `hub.usbclass`).
   Children are then created with `NSCMD_USB_CREATE_DEVICE` carrying `parent_handle = the hub's handle` and
   the child's port - exactly the tree edge the HCD needs, with no snooping.
 * **Streams (UAS)** are first-class: `NSCMD_USB_ALLOC_STREAMS` builds the
@@ -921,7 +921,7 @@ control/bulk/interrupt/UAS, the controller pulls/pushes for clock-driven iso.
   With explicit parent/port at create time, a context HCD needs **no address-0 serialization** -
   `NSCMD_USB_CREATE_DEVICE` performs the whole Enable Slot → Address Device internally, so identity is
   the handle, never a shared address-0 slot, and multiple devices can be created/addressed concurrently
-  across hubs. (Address-0 serialization for the legacy path is kept by `hub.class` itself; see §13.)
+  across hubs. (Address-0 serialization for the legacy path is kept by `hub.usbclass` itself; see §13.)
 
 ---
 
@@ -952,7 +952,7 @@ control/bulk/interrupt/UAS, the controller pulls/pushes for clock-driven iso.
   ABI is a *hard compatibility requirement* - classic third-party Poseidon HCDs (Deneb, Subway, Highway,
   Thylacine, …) keep working unchanged (library doc §5.2).
 * **The class-driver-facing API is unchanged.** `psdAllocPipe`/`psdDoPipe` are untouched; the split is
-  entirely below them (library doc §5.2, §5.6). `hub.class`/`hubss.class` are exempt from that freeze - they
+  entirely below them (library doc §5.2, §5.6). `hub.usbclass`/`hubss.usbclass` are exempt from that freeze - they
   are restructured together with the library where it simplifies the lower edge; all other classes stay
   untouched.
 
@@ -974,8 +974,8 @@ control/bulk/interrupt/UAS, the controller pulls/pushes for clock-driven iso.
 * **Context HCDs need no address-0 serialization.** `NSCMD_USB_CREATE_DEVICE` performs the entire Enable
   Slot → Address Device sequence internally - there is never a software-visible "device at address 0"
   phase - so enumeration under a context HCD may proceed concurrently across hubs. The legacy path
-  keeps the serialization, hosted in `hub.class` (its own class-wide embedded `nh_Adr0Sema`);
-  `hubss.class` is context-only and doesn't serialize address 0.
+  keeps the serialization, hosted in `hub.usbclass` (its own class-wide embedded `nh_Adr0Sema`);
+  `hubss.usbclass` is context-only and doesn't serialize address 0.
 * **The legacy ABI stays software-addressed.** HCD-owned addressing is context-ABI-only; the frozen
   legacy ABI keeps the stack picking addresses and emitting `SET_ADDRESS`, unchanged. A unified
   addressing model, if ever wanted, would be a *new* op on a future ABI revision, never an edit to the

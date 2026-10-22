@@ -11,9 +11,9 @@
 
 /* Cross-class dispatch (evicting the USB2 twin of an SS device via the peer
  * hub's class): only the inline LVO macros - the clib prototype (2 args) would
- * clash with our own 3-argument usbDoMethodA export below. USBCLASS_BASE_NAME
+ * clash with our own 3-argument usbDoMethodA export below. NEPTUNE_CLASS_BASE_NAME
  * defaults to UsbClsBase, a local in nNotifyPeerTwinEvict(). */
-#include <inline/usbclass.h>
+#include <inline/neptune_class.h>
 
 /* /// "Lib Stuff" */
 static const STRPTR libname = CLASS_NAME;
@@ -101,7 +101,7 @@ struct NepClassHub * usbForceDeviceBinding(struct NepHubBase * nh, struct PsdDev
             nch->nch_HubBase = nh;
             nch->nch_Device = pd;
             nch->nch_Settling = TRUE;
-            psdSafeRawDoFmt(buf, 64, "hub.class<0x%08lx>", nch);
+            psdSafeRawDoFmt(buf, 64, CLASS_NAME "<0x%08lx>", nch);
             nch->nch_ReadySignal = SIGB_SINGLE;
             nch->nch_ReadySigTask = FindTask(NULL);
             SetSignal(0, SIGF_SINGLE);

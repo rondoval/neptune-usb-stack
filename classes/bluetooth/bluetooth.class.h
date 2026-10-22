@@ -12,7 +12,7 @@
 
 #include <devices/bluetoothhci.h>
 #include <devices/newstyle.h>
-#include <libraries/usbclass.h>
+#include <libraries/neptune_class.h>
 
 #include <string.h>
 #include <stddef.h>

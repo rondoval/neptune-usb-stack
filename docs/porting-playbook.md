@@ -16,8 +16,8 @@ component, add a class driver, or touch the `.sfd`/`sfdc` flow.
 
 From the AROS `rom/usb/` tree (baseline SHA in `AROS-BASELINE`, extraction tagged
 `aros-extract-base`): `poseidon.library`
-(here `neptune.library`), `usbclass.library` (the base meta-class every class inherits - a
-headers-only cmake target, since nothing opens it), all class drivers, Trident (here Neptune USB)
+(here `neptune.library`), `usbclass.library` (here `neptune_class/`: the base meta-class every
+class inherits - a headers-only cmake target, since nothing opens it), all class drivers, Trident (here Neptune USB)
 and the CLI tools. `scripts/aros-port.sh` maps the upstream paths and file names onto this tree.
 
 **Not taken:** the AROS host-controller drivers `pciusb`/`pcixhci`/`vusbhc` - here the host
@@ -182,7 +182,7 @@ the release builds the same tree for 68020/68040/68060, so never assume a CPU in
 
 Each class is a full genmodule library, so §1 runs **per class**, but the shared skeleton + GUI/ROM
 infrastructure make most of it mechanical. No per-class `.sfd` (the 3 usbclass ABI vectors come from
-`usbclass_headers` + the shared `class_main.c` skeleton). The installer drops any new `.class` into
+`neptune_class_headers` + the shared `class_main.c` skeleton). The installer drops any new `.class` into
 `DEVS:USBClasses/`, so there is **no packaging work per class**.
 
 ### 3.1 Per-class recipe (mechanical core)
@@ -343,7 +343,7 @@ below it either - the vendored `mounter/` submodule is V40-only like the rest of
 fallback.
 
 Three exceptions stand, each runtime-gated rather than avoided, and each documented where it lives:
-`IND_ADDEVENT` (`input.device` V47) in `hid.class`, gated on the device's own `lib_Version >= 47`
+`IND_ADDEVENT` (`input.device` V47) in `hid.usbclass`, gated on the device's own `lib_Version >= 47`
 with an `IND_WRITEEVENT` fallback ([hid.class-architecture.md](hid.class-architecture.md) §5.6, §6 rule 2);
 `WBAPPMENUA_GetTitleKey`/`WBAPPMENUA_UseKey` (`workbench.library` V45) in USBEject, *probed* rather
 than version-tested, so an older library simply ignores the tag (`usbeject/USBEject.c`); and

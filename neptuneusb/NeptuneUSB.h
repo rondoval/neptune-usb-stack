@@ -25,7 +25,7 @@
 #include <workbench/startup.h>
 #include <workbench/workbench.h>
 #include <datatypes/pictureclass.h>
-#include <libraries/usbclass.h>
+#include <libraries/neptune_class.h>
 
 #include <proto/alib.h>
 

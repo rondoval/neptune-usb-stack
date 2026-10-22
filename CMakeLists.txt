@@ -127,7 +127,7 @@ function(add_neptune_class name)
     target_compile_definitions(${tgt} PRIVATE
         __NOLIBBASE__
         NEPTUNE_BASE_NAME=ps
-        CLASS_NAME="${name}.class"             # MOD_NAME_STRING/VERSION_STRING derive from it (common.h)
+        CLASS_NAME="${name}.usbclass"          # file = romtag = library name; VERSION_STRING etc. derive from it
         CLASS_INCLUDE="${PC_INCLUDE}"
         CLASS_BASETYPE_NAME=${PC_BASETYPE}
         CLASS_PRI=${PC_PRI}
@@ -152,7 +152,7 @@ function(add_neptune_class name)
     target_link_options(${tgt} PRIVATE
         -nostdlib -nostartfiles -s)
 
-    set_target_properties(${tgt} PROPERTIES OUTPUT_NAME ${name} SUFFIX ".class")
+    set_target_properties(${tgt} PROPERTIES OUTPUT_NAME ${name} SUFFIX ".usbclass")
     nep_debug_finalize(${tgt})                 # links -ldebug only for the serial backend
     nep_enable_lto(${tgt})
     nep_module_layout(${tgt})                  # entry at 0, RT_ENDSKIP, no writable data
@@ -192,8 +192,8 @@ include(cmake/NeptuneModuleLayout.cmake)
 # Link-time optimization, opted in per target.
 include(cmake/NeptuneLto.cmake)
 
-# --- Components (usbclass first: neptune.library + the classes consume its headers) ---
-add_subdirectory(usbclass.library)
+# --- Components (neptune_class first: neptune.library + the classes consume its headers) ---
+add_subdirectory(neptune_class)
 add_subdirectory(neptune.library)
 add_subdirectory(romstartup)
 add_subdirectory(c)

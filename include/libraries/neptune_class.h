@@ -1,18 +1,16 @@
 /*
  *----------------------------------------------------------------------------
- *                         Includes for usb class libraries
+ *                  Neptune USB class-driver protocol
  *----------------------------------------------------------------------------
- *                   By Chris Hodges <hodges@in.tum.de>
- *
- * History
- *
- *  08-05-2002  - Initial
- *  16-10-2004  - Extended some parts
- *
+ * The attributes and methods neptune.library and its class drivers exchange
+ * through usbGetAttrsA/usbSetAttrsA/usbDoMethodA (<proto/neptune_class.h>).
+ * Derived from Poseidon's usbclass.h by Chris Hodges <hodges@in.tum.de>, but
+ * Neptune's protocol, not Poseidon's: a class built against one does not run
+ * on the other.
  */
 
-#ifndef USBCLASS_H
-#define USBCLASS_H
+#ifndef LIBRARIES_NEPTUNE_CLASS_H
+#define LIBRARIES_NEPTUNE_CLASS_H
 
 #include <exec/types.h>
 #include <exec/libraries.h>
@@ -125,4 +123,4 @@
 #define UCM_HubResetPort            0x0f09 /* { hubbinding, device } - hot-reset the device's port;
                                               no re-enumeration, no device teardown */
 
-#endif /* USBCLASS_H */
+#endif /* LIBRARIES_NEPTUNE_CLASS_H */

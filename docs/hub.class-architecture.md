@@ -1,6 +1,6 @@
-# hub.class - Architecture
+# hub.usbclass - Architecture
 
-> **Scope:** `hub.class`, the USB 1.1/2.0 hub driver and the class that builds the device tree.
+> **Scope:** `hub.usbclass`, the USB 1.1/2.0 hub driver and the class that builds the device tree.
 > It is a client of `neptune.library`; read [neptune.library-architecture.md](neptune.library-architecture.md)
 > first (connect and disconnect §5.4, release and claim routing §5.5). The SuperSpeed sibling is
 > [hubss.class-architecture.md](hubss.class-architecture.md).
@@ -12,11 +12,11 @@
 
 ## 1. Purpose
 
-`hub.class` is the one **mandatory** class. Without it the stack sees only the devices on the root
+`hub.usbclass` is the one **mandatory** class. Without it the stack sees only the devices on the root
 hub's ports. It has three jobs:
 
 1. **Build the tree.** Every bound hub watches its ports, enumerates what is plugged in and hands
-   the new device to the class scan. When that device is a hub, `hub.class` binds it too, so the
+   the new device to the class scan. When that device is a hub, `hub.usbclass` binds it too, so the
    tree is discovered recursively.
 2. **Track it live.** Connects, disconnects, over-current, power changes and remote wake-up are
    reported by the hub and turned into stack events.
@@ -32,8 +32,8 @@ It binds at the **device** level, on `HUB_CLASSCODE`; a hub is the whole device.
 ```mermaid
 flowchart TB
     CORE["neptune.library"]
-    HUBSS["hubss.class - SuperSpeed hubs, context HCDs only"]
-    subgraph HUB["hub.class - one hub task per bound hub"]
+    HUBSS["hubss.usbclass - SuperSpeed hubs, context HCDs only"]
+    subgraph HUB["hub.usbclass - one hub task per bound hub"]
         TA["hub task: root hub"]
         TB["hub task: external hub"]
     end
@@ -55,8 +55,8 @@ flowchart TB
 - **Sideways**, it makes one call into another class: evicting a twin port on the other half of a
   USB 3 hub (§5.4).
 
-**Split with `hubss.class`.** `hubss.class` has the higher scan priority and accepts only
-SuperSpeed hubs, and only on a context HCD. `hub.class` accepts any hub and is the catch-all:
+**Split with `hubss.usbclass`.** `hubss.usbclass` has the higher scan priority and accepts only
+SuperSpeed hubs, and only on a context HCD. `hub.usbclass` accepts any hub and is the catch-all:
 on a legacy HCD it also binds the SuperSpeed half of a USB 3 hub. That is why it carries the USB 3
 pairing logic.
 
@@ -123,7 +123,7 @@ The bind is synchronous towards the library but the work happens in the new task
 ```mermaid
 sequenceDiagram
     participant CORE as neptune.library
-    participant DISP as hub.class dispatcher
+    participant DISP as hub.usbclass dispatcher
     participant T as new hub task
 
     CORE->>DISP: UCM_AttemptDeviceBinding (device class is HUB)
@@ -164,7 +164,7 @@ stateDiagram-v2
   do so at a time across all hubs. The class-wide lock is held for the whole of `nConfigurePort`
   (rule 3). On a context HCD the controller assigns addresses atomically and the lock is skipped.
   That is the only behaviour that differs between the two HCD kinds.
-- The new device is then offered to the class scan, which may bind it to `hub.class` again.
+- The new device is then offered to the class scan, which may bind it to `hub.usbclass` again.
 
 ### 5.3 Hot-plug
 
@@ -197,8 +197,8 @@ halves cooperate, the device is enumerated twice.
 - **The USB 2.0 half defers.** It skips ports its SS peer already owns: in the initial pass, on a
   power-cycle, and on connect, after a short debounce that gives the SS link time to train. A USB
   2.0 hub with no peer pays no delay.
-- The eviction is a `UCM_HubDisablePort` addressed by device. `hub.class` serves both roles,
-  because on a legacy HCD it is bound to both halves. The peer may be `hubss.class`.
+- The eviction is a `UCM_HubDisablePort` addressed by device. `hub.usbclass` serves both roles,
+  because on a legacy HCD it is bound to both halves. The peer may be `hubss.usbclass`.
 
 ### 5.5 Method routing
 
@@ -251,8 +251,8 @@ Each rule exists because breaking it caused, or would cause, a real failure.
 2. **Deferred-work flags drive the loop, not signals.** The signal that came with a flag can be
    consumed by a pipe wait inside a concurrent enumeration (a twin eviction arriving mid-
    `nConfigurePort`). So while flags are set the loop does not `Wait`.
-3. **The address-0 lock is class-local and legacy-only.** It belongs to `hub.class`, is held across
-   all of `nConfigurePort`, and is not shared with `hubss.class` (SuperSpeed has no default-address
+3. **The address-0 lock is class-local and legacy-only.** It belongs to `hub.usbclass`, is held across
+   all of `nConfigurePort`, and is not shared with `hubss.usbclass` (SuperSpeed has no default-address
    phase). Narrowing it brings back the race where a device is parented to the wrong hub; making it
    stack-wide again serialises controllers that need no serialising.
 4. **One writer for the suspended flag.** Only the hub port operations write it; the library writes
@@ -269,7 +269,7 @@ Each rule exists because breaking it caused, or would cause, a real failure.
    so the hub-gone timeout cannot happen. Removal is then detected by the parent hub, which works
    only because the chain ends at a root hub that the idle sweep never suspends. An explicit user
    suspend of a hub is allowed; changes are latched by the hardware and reported on resume.
-8. **No speed check at bind.** `hub.class` must stay the catch-all; rejecting SuperSpeed hubs would
+8. **No speed check at bind.** `hub.usbclass` must stay the catch-all; rejecting SuperSpeed hubs would
    leave USB 3 hubs on legacy HCDs unbound and break pairing.
 9. **Hub-gone detection depends on the HCD.** The HCD must return `UHIOERR_TIMEOUT` promptly on
    EP1 when a hub disappears.

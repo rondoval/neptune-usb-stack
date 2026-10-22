@@ -17,7 +17,7 @@
 #include <dos/dos.h>
 #include <dos/exall.h>
 #include <string.h>
-#include <nep_paths.h>  /* NEP_CLASSDRAWER */
+#include <nep_paths.h>  /* NEP_CLASSDRAWER, NEP_CLASSSUFFIX */
 
 #define NEP_CLASSNAMEMAX 128
 
@@ -57,17 +57,16 @@ static inline BOOL psdAddClassDir(struct Library *ps, BOOL verbose)
         ents = exall->eac_Entries;
         for(; ents--; exdata = exdata->ed_Next)
         {
-            psdSafeRawDoFmt(sbuf, NEP_CLASSNAMEMAX, NEP_CLASSDRAWER "/%s", exdata->ed_Name);
-            namelen = strlen(sbuf);
-            if(((namelen > 4) && (!strcmp(&sbuf[namelen-4], ".dbg"))) ||
-               ((namelen > 5) && (!strcmp(&sbuf[namelen-5], ".info"))))
+            /* Class drivers only: icons, other stacks' classes (Poseidon's are
+               "<name>.class") and anything else in the drawer are skipped. */
+            namelen = strlen((const char *) exdata->ed_Name);
+            if((namelen <= sizeof(NEP_CLASSSUFFIX) - 1) ||
+               stricmp((const char *) &exdata->ed_Name[namelen - (sizeof(NEP_CLASSSUFFIX) - 1)],
+                       NEP_CLASSSUFFIX))
             {
                 continue;
             }
-            if((namelen > 4) && (!strcmp(&sbuf[namelen-4], ".elf")))
-            {
-                sbuf[namelen-4] = 0;
-            }
+            psdSafeRawDoFmt(sbuf, NEP_CLASSNAMEMAX, NEP_CLASSDRAWER "/%s", exdata->ed_Name);
 
             psdGetAttrs(PGA_STACK, NULL, PA_ClassList, &puclist, TAG_END);
             Forbid();

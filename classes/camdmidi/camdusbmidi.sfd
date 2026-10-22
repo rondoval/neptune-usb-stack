@@ -1,14 +1,14 @@
 ==id $Id: camdusbmidi.sfd 6.3 $
-* "camdusbmidi.class"
+* "camdusbmidi.usbclass"
 ==base _NepMidiBase
 ==basetype struct Library *
-==libname camdusbmidi.class
+==libname camdusbmidi.usbclass
 ==bias 30
 ==public
 ==include <exec/types.h>
 ==include <utility/tagitem.h>
 ==include <libraries/neptune.h>
-==include <libraries/usbclass.h>
+==include <libraries/neptune_class.h>
 LONG usbGetAttrsA(ULONG type, APTR usbstruct, struct TagItem *taglist) (D0,A0,A1)
 LONG usbSetAttrsA(ULONG type, APTR usbstruct, struct TagItem *taglist) (D0,A0,A1)
 SIPTR usbDoMethodA(ULONG methodid, IPTR *methoddata) (D0,A1)

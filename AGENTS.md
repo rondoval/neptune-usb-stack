@@ -10,8 +10,9 @@ The version is `project(VERSION)` in the top-level `CMakeLists.txt` and nowhere 
 
 It is a **matched pair** with `xhci.device` in the `emu68-driver-stack` checkout
 (`components/emu68-xhci-driver-context/`): cross-ABI changes land in both, and the vendored
-`usbhcd_*.h` copies there stay byte-identical to `include/devices/`. Don't edit the frozen
-`emu68-xhci-driver-legacy/` for stack work.
+`usbhcd_*.h` copies there stay byte-identical to `include/devices/`. The 5.x line,
+`emu68-xhci-driver-legacy/` (`xhci-legacy.device`), is not part of that pair; don't touch it for
+stack work.
 
 AROS baseline: `AROS-BASELINE`, extraction tagged `aros-extract-base`.
 
@@ -69,7 +70,7 @@ Open work lives in `docs/implementation-plan.md` only.
   cp1251 - use `grep -a`.
 - The class scan must not wire-switch alternates while probing, and endpoint-recipient class
   requests carry the full endpoint address in `wIndex`.
-- The address-0 enumeration lock is `hub.class`-local (`nh_Adr0Sema`, held across all of
+- The address-0 enumeration lock is `hub.usbclass`-local (`nh_Adr0Sema`, held across all of
   `nConfigurePort`). Don't reintroduce a stack-wide one or narrow it.
 
 ## Source conventions

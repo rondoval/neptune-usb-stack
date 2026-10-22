@@ -34,6 +34,11 @@ static const APTR DevFuncTable[] =
 
 int libInit(struct NepVideoBase * nh)
 {
+    if(nDevNameTaken(DEVNAME))
+    {
+        return FALSE;
+    }
+
     KPRINTF(10, ("libInit nh: 0x%08lx SysBase: 0x%08lx\n", nh, EXEC_BASE_NAME));
 
     nh->nh_UtilityBase = OpenLibrary("utility.library", 39);
@@ -178,7 +183,7 @@ struct NepClassVideo * usbForceInterfaceBinding(struct NepVideoBase *nh, struct 
         ncv->ncv_IfIDString = ifidstr;
         ncv->ncv_UsingDefaultCfg = TRUE;
 
-        psdSafeRawDoFmt(buf, 64, "usbvideo.class<%08lx>", ncv);
+        psdSafeRawDoFmt(buf, 64, CLASS_NAME "<%08lx>", ncv);
         ncv->ncv_ReadySignal = SIGB_SINGLE;
         ncv->ncv_ReadySigTask = FindTask(NULL);
         SetSignal(0, SIGF_SINGLE);

@@ -18,7 +18,6 @@
 #include <proto/dos.h>
 #include <neptune_version.h>
 #include <classdir.h>
-#include <nep_otherstack.h>
 
 #define ARGS_QUIET      0
 #define ARGS_REMOVE     1
@@ -73,14 +72,6 @@ int main(int argc, char *argv[])
             }
             psdUnlockPBase();
         } else {
-            UWORD other = nepPoseidonLoaded();
-            if(other)
-            {
-                Printf(NEP_OTHERSTACK_TXT "\n", (LONG) other);
-                CloseLibrary(ps);
-                FreeArgs(ArgsHook);
-                return RETURN_WARN;
-            }
             if(psdAddClassDir(ps, !ArgsArray[ARGS_QUIET]))
             {
                 psdClassScan();

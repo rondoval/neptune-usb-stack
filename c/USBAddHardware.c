@@ -53,8 +53,8 @@ void fail(char *str)
  * REMOVE path, so there is one answer to "which controller is that?".
  *
  * Identity comes from <hwmatch.h>, the same predicate the library's own
- * pFindHardware() compares with, so a prefs entry like
- * DEVS:USBHardware/xhci-context.device matches a bare xhci-context.device.
+ * pFindHardware() compares with, so a prefs entry like DEVS:USBHardware/xhci.device
+ * matches a bare xhci.device.
  */
 static struct Node *findHardware(struct Library *ps, STRPTR devname, ULONG unit)
 {

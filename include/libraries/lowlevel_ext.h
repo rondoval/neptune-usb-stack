@@ -6,6 +6,7 @@
 **	Includes Release 50.x
 **
 **	extended lowlevel.library interface structures and definitions.
+**	As used by Neptune's hid class.
 **
 **	(C) Copyright 2004 Chris Hodges
 **	All Rights Reserved

@@ -32,7 +32,7 @@
 
 #include <devices/usb.h>
 #include <devices/usbhardware.h>
-#include <libraries/usbclass.h>
+#include <libraries/neptune_class.h>
 
 #include <string.h>
 #include <stddef.h>
@@ -82,6 +82,33 @@ typedef BOOL (*S2CopyBuffFunc)(APTR to asm("a0"), APTR from asm("a1"), ULONG len
 static inline BOOL nCallS2Copy(APTR func, APTR to, APTR from, ULONG len)
 {
     return ((S2CopyBuffFunc) func)(to, from, len);
+}
+
+/* TRUE if exec's device list already holds name - another USB stack's device of that
+ * name, or a second copy of this class - logged as why the class does not start.
+ * First thing in libInit(), before anything is allocated, so a FALSE return has
+ * nothing to unwind. The log needs neptune.library already in memory: libInit()
+ * runs in ramlib's context when a class loads from disk, where an OpenLibrary()
+ * that has to load would deadlock.
+ */
+static inline BOOL nDevNameTaken(CONST_STRPTR name)
+{
+    Forbid();
+    BOOL taken = (FindName(&EXEC_BASE_NAME->DeviceList, name) != NULL);
+    BOOL haveps = taken && (FindName(&EXEC_BASE_NAME->LibList, NEPTUNENAME) != NULL);
+    Permit();
+    if(haveps)
+    {
+        struct Library *ps = OpenLibrary(NEPTUNENAME, NEPTUNE_LIB_MIN_VERSION);
+        if(ps)
+        {
+            psdAddErrorMsg(RETURN_ERROR, (STRPTR) CLASS_NAME,
+                           "%s is already provided by another USB stack; %s does not start.",
+                           (STRPTR) name, (STRPTR) CLASS_NAME);
+            CloseLibrary(ps);
+        }
+    }
+    return taken;
 }
 
 /* Log wordings shared by every class driver. */

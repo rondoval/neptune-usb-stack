@@ -31,8 +31,8 @@ Nie mo¿na wysun±æ '%s':\n%s jest wci±¿ w u¿yciu.\nZamknij wszystkie pliki na nim
 ; Cannot eject '%s':\n%s is still in use.\nClose all files on it and try again.
 ;
 MSG_REQ_TOOOLD
-Nie mo¿na wysun±æ '%s':\nzainstalowana massstorage.class jest za stara\ndla bezpiecznego wysuwania - zaktualizuj j±.
-; Cannot eject '%s':\nthe installed massstorage.class is too old\nfor safe eject - please update it.
+Nie mo¿na wysun±æ '%s':\nzainstalowana massstorage.usbclass jest za stara\ndla bezpiecznego wysuwania - zaktualizuj j±.
+; Cannot eject '%s':\nthe installed massstorage.usbclass is too old\nfor safe eject - please update it.
 ;
 MSG_REQ_FAILED
 Wysuwanie '%s' nie powiod³o siê.\nZobacz dziennik b³êdów Neptuna (Neptune USB).

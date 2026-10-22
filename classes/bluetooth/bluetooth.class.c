@@ -29,6 +29,11 @@ int libInit(struct NepBTBase * nh)
     struct NepClassBT *ncp;
     struct NepBTBase *ret = NULL;
 
+    if(nDevNameTaken(DEVNAME))
+    {
+        return FALSE;
+    }
+
     KPRINTF(10, ("libInit nh: 0x%08lx SysBase: 0x%08lx\n", nh, EXEC_BASE_NAME));
 
     nh->nh_UtilityBase = OpenLibrary("utility.library", 39);
@@ -109,7 +114,7 @@ int libExpunge(struct NepBTBase * nh)
 
         nh->nh_DevBase->np_Library.lib_OpenCnt--;
         RemDevice((struct Device *) nh->nh_DevBase);
-        KPRINTF(5, ("libExpunge: Unloading done! bluetooth.class expunged!\n\n"));
+        KPRINTF(5, ("libExpunge: Unloading done! bluetooth.usbclass expunged!\n\n"));
     } else {
         KPRINTF(5, ("libExpunge: Could not expunge, LIBF_DELEXP set!\n"));
         return(FALSE);
@@ -307,7 +312,7 @@ struct NepClassBT * usbForceInterfaceBinding(struct NepBTBase *nh, struct PsdInt
         ncp->ncp_UnitNo = unitno;
         Permit();
 
-        psdSafeRawDoFmt(buf, 64, "bluetooth.class<%08lx>", ncp);
+        psdSafeRawDoFmt(buf, 64, CLASS_NAME "<%08lx>", ncp);
         ncp->ncp_ReadySignal = SIGB_SINGLE;
         ncp->ncp_ReadySigTask = FindTask(NULL);
         SetSignal(0, SIGF_SINGLE);
@@ -1185,7 +1190,7 @@ void nGUITask()
         MUIA_Application_Version    , (IPTR)VERSION_STRING,
         MUIA_Application_Copyright  , (IPTR)"(C) 2005-2009 Chris Hodges",
         MUIA_Application_Author     , (IPTR)"Chris Hodges <chrisly@platon42.de>",
-        MUIA_Application_Description, (IPTR)"Settings for the bluetooth.class",
+        MUIA_Application_Description, (IPTR)"Settings for the " CLASS_NAME,
         MUIA_Application_Base       , (IPTR)"BLUETOOTH",
         MUIA_Application_HelpFile   , (IPTR)"HELP:Neptune.guide",
         MUIA_Application_Menustrip  , (IPTR)MenustripObject,

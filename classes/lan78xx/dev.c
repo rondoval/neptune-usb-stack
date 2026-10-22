@@ -1,4 +1,4 @@
-/* dev.c - lan78xx.class
+/* dev.c - lan78xx.usbclass
  *
  * Based on usbcdceth.device by Chris Hodges.
  */

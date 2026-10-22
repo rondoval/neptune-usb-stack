@@ -11,7 +11,7 @@
 #include "common.h"
 
 #include <devices/usb_audio.h>
-#include <libraries/usbclass.h>
+#include <libraries/neptune_class.h>
 
 #include <devices/ahi.h>
 #include <libraries/ahi_sub.h>

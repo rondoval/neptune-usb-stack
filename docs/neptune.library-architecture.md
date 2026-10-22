@@ -8,7 +8,7 @@
 >
 > Sources: `neptune.library/` (`neptune.library.c`, `neptune_intern.h`, `neptune_main.c`,
 > `neptune.sfd`, `notify.gui.c`, `numtostr.c`); public headers `include/libraries/neptune.h`,
-> `include/libraries/usbclass.h`, `include/devices/usbhcd_common.h`, `usbhardware.h`,
+> `include/libraries/neptune_class.h`, `include/devices/usbhcd_common.h`, `usbhardware.h`,
 > `usbhcd_context.h`; on-disk names in `include/nep_paths.h`.
 >
 > This document describes structure, behaviour and the rules that keep it correct. It names
@@ -47,12 +47,12 @@ traffic, do the housekeeping that has to block, and show popups (§4.1).
 flowchart TB
     subgraph APPS["Applications"]
         NUSB["Neptune USB (prefs editor)"]
-        START["USBStart, AddUSBHardware, AddUSBClasses"]
+        START["USBStart, USBAddHardware, USBAddClasses"]
         EJ["USBEject, USB tools"]
     end
     ROM["ROM startup resident"]
     subgraph CLS["Class drivers (*.class)"]
-        HUB["hub.class, hubss.class"]
+        HUB["hub.usbclass, hubss.usbclass"]
         OTH["hid, massstorage, usbaudio, usbvideo, ..."]
     end
     CORE[["neptune.library"]]
@@ -85,7 +85,7 @@ flowchart TB
   clients. It uses DOS to load settings, spawn Processes and load drivers; the notifier uses
   Intuition, MUI and datatypes.
 
-`hub.class` is the one mandatory class. The library enumerates and scans only root hubs; every
+`hub.usbclass` is the one mandatory class. The library enumerates and scans only root hubs; every
 deeper device is found by the hub class bound to its parent and enumerated in that hub's task
 (§5.4). `USBStart` and the ROM startup resident (`romstartup/usbromstart.c`) populate the stack;
 the library adds no USB state on its own (§5.1).
@@ -200,7 +200,16 @@ settings and starts the event task. Neither adds USB state.
 **`USBStart`** loads the settings (§5.12), supplies defaults where they say nothing - every class in
 `DEVS:USBClasses` when no class is listed, the controller named on its command line when none is
 listed or attached - and applies them with `psdParseCfg`. The test is what the settings list, not
-whether a file existed. `AddUSBHardware` and `AddUSBClasses` do the two default jobs by hand.
+whether a file existed. `USBAddHardware` and `USBAddClasses` do the two default jobs by hand.
+
+**One stack at a time.** While `poseidon.library` is in exec's library list, at any version,
+Neptune starts no host controller: `USBStart`, `USBAddHardware` and the ROM resident stop with one
+log line, and `psdParseCfg` and `psdAddHardware` refuse for any other caller
+(`include/nep_otherstack.h`) - two stacks must never drive the same controller. Class drivers are
+not refused: Neptune's are `<name>.usbclass`, Poseidon's `<name>.class`, so ramlib never hands one
+stack the other's, and the class drawer scan (`include/classdir.h`) loads `*.usbclass` only. A
+class that provides an exec device does not start when a device of that name is already in the
+system (`nDevNameTaken()`, `classes/common.h`).
 
 **Apply** (`psdParseCfg`) reconciles the running stack with the settings' stack form: unlisted
 classes and controllers are removed, missing ones added (`psdAddClass`; `psdAddHardware` and
@@ -208,16 +217,16 @@ classes and controllers are removed, missing ones added (`psdAddClass`; `psdAddH
 without a hardware list remove no hardware, settings without a class list remove no class, and an
 in-use ROM class is never removed (rule 15). Before DOS it also waits out the boot delay.
 
-**ROM boot.** The resident adds `hub.class`, `hubss.class`, `massstorage.class` and the input classes
-(`hid.class`, or the boot keyboard and mouse classes), adds and enumerates the controller, runs a
+**ROM boot.** The resident adds `hub.usbclass`, `hubss.usbclass`, `massstorage.usbclass` and the input classes
+(`hid.usbclass`, or the boot keyboard and mouse classes), adds and enumerates the controller, runs a
 class scan - unconditionally, since that scan latches the AfterDOS state below - and then polls
-`UCM_PortsPending` on the hub classes and `UCM_MediaPending` on `massstorage.class` until the hubs
+`UCM_PortsPending` on the hub classes and `UCM_MediaPending` on `massstorage.usbclass` until the hubs
 have settled and no medium is still coming up, within a time cap. It never applies settings.
 
 **AfterDOS.** A class scan from a Task before any settings were read latches `ps_StartedAsTask`. The
 first class scan from a Process clears it and runs `pReleaseAfterDOSBindings`: bindings of classes
 that set `UCCA_AfterDOSRestart` (the boot keyboard and mouse classes) are released so the
-disk-loaded `hid.class` can take the devices, and every class gets `UCM_DOSAvailableEvent`. The
+disk-loaded `hid.usbclass` can take the devices, and every class gets `UCM_DOSAvailableEvent`. The
 pass belongs to the class scan, not to settings, so it runs without a prefs file too; `USBStart`
 loads the disk classes before applying the settings so they exist for that scan.
 
@@ -268,7 +277,7 @@ has allocated, placed (parent, port, speed) and reset, or in `psdEnumerateHardwa
    speed each allow one value; only full speed has a choice), and pushed to the backend. A normal
    root hub has no link: it starts as full speed, so its own value is taken;
 3. the full device descriptor, after which a normal root hub with `bcdUSB` 2.00 or above becomes
-   high speed (hub.class marks full- and low-speed devices below it for split transactions); a
+   high speed (hub.usbclass marks full- and low-speed devices below it for split transactions); a
    full-speed controller's stays full speed, and the SuperSpeed root hub is flagged before
    enumeration. Then BOS facts (LPM, BESL, U1/U2 exit latencies, container id) when
    `bcdUSB` is above 2.00; the strings, the clone count and `pd_IDString`;
@@ -328,8 +337,8 @@ Removing a hub stops its task, which frees its children first: a subtree unwinds
 
 | Level | Fields | Example |
 |---|---|---|
-| Device | `pd_DevBinding`, `pd_ClsBinding` | `hub.class` takes the whole device |
-| Interface | `pif_IfBinding`, `pif_ClsBinding` | `hid.class`, `massstorage.class` take one interface each |
+| Device | `pd_DevBinding`, `pd_ClsBinding` | `hub.usbclass` takes the whole device |
+| Interface | `pif_IfBinding`, `pif_ClsBinding` | `hid.usbclass`, `massstorage.usbclass` take one interface each |
 | Application | `pd_DevBinding` with `PDFF_APPBINDING`, no class | a tool claims a device for itself |
 
 A binding is an opaque pointer the class returns, usually its per-instance context; the library

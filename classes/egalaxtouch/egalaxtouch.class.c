@@ -154,7 +154,7 @@ struct NepClassHid * usbForceDeviceBinding(struct NepHidBase *nh, struct PsdDevi
 
             nLoadBindingConfig(nch);
 
-            psdSafeRawDoFmt(buf, 64, "egalaxtouch.class<%08lx>", nch);
+            psdSafeRawDoFmt(buf, 64, CLASS_NAME "<%08lx>", nch);
             nch->nch_ReadySignal = SIGB_SINGLE;
             nch->nch_ReadySigTask = FindTask(NULL);
             SetSignal(0, SIGF_SINGLE);
@@ -958,7 +958,7 @@ void nGUITask()
         MUIA_Application_Version    , (IPTR)VERSION_STRING,
         MUIA_Application_Copyright  , (IPTR)"(C) 2004-2009 Chris Hodges",
         MUIA_Application_Author     , (IPTR)"Chris Hodges <chrisly@platon42.de>",
-        MUIA_Application_Description, (IPTR)"Settings for the egalaxtouch.class",
+        MUIA_Application_Description, (IPTR)"Settings for the " CLASS_NAME,
         MUIA_Application_Base       , (IPTR)"EGALAXTOUCH",
         MUIA_Application_HelpFile   , (IPTR)"HELP:Neptune.guide",
         MUIA_Application_Menustrip  , (IPTR)MenustripObject,

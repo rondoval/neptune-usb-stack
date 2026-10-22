@@ -297,6 +297,11 @@ int libInit(struct NepMSBase * nh)
     struct NepClassMS *ncm;
     struct NepMSBase *ret = NULL;
 
+    if(nDevNameTaken(DEVNAME))
+    {
+        return FALSE;
+    }
+
     KPRINTF(10, ("libInit nh: 0x%08lx SysBase: 0x%08lx\n", nh, EXEC_BASE_NAME));
 
 #define	UtilityBase nh->nh_UtilityBase
@@ -409,7 +414,7 @@ int libExpunge(struct NepMSBase * nh)
 
         nh->nh_DevBase->np_Library.lib_OpenCnt--;
         RemDevice((struct Device *) nh->nh_DevBase);
-        KPRINTF(5, ("libExpunge: Unloading done! massstorage.class expunged!\n\n"));
+        KPRINTF(5, ("libExpunge: Unloading done! massstorage.usbclass expunged!\n\n"));
     } else {
         KPRINTF(5, ("libExpunge: Could not expunge, LIBF_DELEXP set!\n"));
         return(FALSE);
@@ -968,7 +973,7 @@ struct NepClassMS * usbForceInterfaceBinding(struct NepMSBase *nh, struct PsdInt
                 nStoreConfig(ps, ncm);
                 delayedstore = FALSE;
             }
-            psdSafeRawDoFmt(buf, 64, "massstorage.class<%08lx,%ld>", ncm, lunnum);
+            psdSafeRawDoFmt(buf, 64, CLASS_NAME "<%08lx,%ld>", ncm, lunnum);
             ncm->ncm_ReadySignal = SIGB_SINGLE;
             ncm->ncm_ReadySigTask = FindTask(NULL);
             SetSignal(0, SIGF_SINGLE);
@@ -5088,7 +5093,7 @@ void nGUITask()
         MUIA_Application_Version    , (IPTR) VERSION_STRING,
         MUIA_Application_Copyright  , (IPTR) "(C) 2002-2009 Chris Hodges",
         MUIA_Application_Author     , (IPTR) "Chris Hodges <chrisly@platon42.de>",
-        MUIA_Application_Description, (IPTR) "Settings for the massstorage.class",
+        MUIA_Application_Description, (IPTR)"Settings for the " CLASS_NAME,
         MUIA_Application_Base       , (IPTR) "MASSSTORAGE",
         MUIA_Application_HelpFile   , (IPTR) "HELP:Neptune.guide",
         MUIA_Application_Menustrip  , (IPTR) MenustripObject,

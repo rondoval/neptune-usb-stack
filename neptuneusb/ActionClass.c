@@ -11,7 +11,7 @@
 #include <proto/neptune.h>
 #include <proto/intuition.h>
 #include <proto/graphics.h>
-#include <proto/usbclass.h>
+#include <proto/neptune_class.h>
 #include <proto/icon.h>
 #include <proto/utility.h>
 

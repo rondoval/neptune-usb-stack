@@ -55,7 +55,7 @@
 #include <devices/usb_massstorage.h>
 #include <devices/usbhardware.h>
 #include <devices/usbhcd_context.h>    /* the context HCD ABI (lifecycle ops) */
-#include <libraries/usbclass.h>
+#include <libraries/neptune_class.h>
 
 /* Internal calls to our own LVO functions go through the inline stubs with the
    libbase = the in-scope `ps` parameter (every LVO function has it in a6). The

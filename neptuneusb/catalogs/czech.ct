@@ -1141,6 +1141,6 @@ Nelze vysunout '%s':\n%s se stále pou¾ívá.\nZavøete na nìm v¹echny soubory a zku
 ; Cannot eject '%s':\n%s is still in use.\nClose all files on it and try again.
 ;
 MSG_ACTION_DEV_EJECT_FAILED_TXT
-Vysunutí '%s' selhalo.\nPodívejte se do záznamu chyb; mo¾ná je\nnutná aktualizace massstorage.class.
-; Ejecting '%s' failed.\nSee the error log; an updated\nmassstorage.class may be required.
+Vysunutí '%s' selhalo.\nPodívejte se do záznamu chyb; mo¾ná je\nnutná aktualizace massstorage.usbclass.
+; Ejecting '%s' failed.\nSee the error log; an updated\nmassstorage.usbclass may be required.
 ;

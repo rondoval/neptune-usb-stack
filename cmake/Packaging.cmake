@@ -8,7 +8,7 @@
 #         Install  Install.info            the Installer script (dist/)
 #         LIBS/neptune.library
 #         LIBS/VHI/usbvideo.vhi            VHI driver for USB cameras -> LIBS:VHI/ (opt-in)
-#         DEVS/USBClasses/*.class
+#         DEVS/USBClasses/*.usbclass
 #         C/USBStart USBAddHardware USBAddClasses USBList USBErrorlog
 #         Prefs/NeptuneUSB  Prefs/NeptuneUSB.info
 #         WBStartup/USBEject  WBStartup/USBEject.info  (safe-eject Workbench menu, opt-in)

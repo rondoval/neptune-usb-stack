@@ -6,7 +6,7 @@
  * Studio speak: a library in LIBS:VHI/ with one function, vhi_api()
  * (<vhi/vhi.h>).
  * This one contains no USB code. It is a client of usbvideo.device, the
- * application interface of usbvideo.class, and maps VHI onto it:
+ * application interface of usbvideo.usbclass, and maps VHI onto it:
  *
  *   an input              a unit of usbvideo.device, that is a camera;
  *                         input n is unit n

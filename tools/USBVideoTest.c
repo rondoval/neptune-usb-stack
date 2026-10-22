@@ -2,7 +2,7 @@
  *----------------------------------------------------------------------------
  *                          USBVideoTest - UVC test bench for Neptune
  *----------------------------------------------------------------------------
- * Test bench for usbvideo.class via usbvideo.device: mode negotiation,
+ * Test bench for usbvideo.usbclass via usbvideo.device: mode negotiation,
  * capture with per-frame validation, controls, status events and the VHI
  * driver. Every test prints PASS or FAIL. Built with the stack, not
  * shipped; the user tool is USBVideo.
@@ -1118,7 +1118,7 @@ static BOOL printTopology(struct IOStdReq *ioreq, struct UsbVideoInfo *uvi,
 
     if(!uvi->uvi_TopologySize)
     {
-        PutStr("FAIL: this usbvideo.class does not list the camera's units - it is older than this tool\n");
+        PutStr("FAIL: this usbvideo.usbclass does not list the camera's units - it is older than this tool\n");
         return FALSE;
     }
     if(!(topology = AllocVec(uvi->uvi_TopologySize, MEMF_ANY)))

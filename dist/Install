@@ -71,7 +71,7 @@
 ;==========================================================================
 (complete 20)
 (makedir "DEVS:USBClasses" (prompt "Creating DEVS:USBClasses") (help @makedir-help))
-(foreach "DEVS/USBClasses" "#?.class"
+(foreach "DEVS/USBClasses" "#?.usbclass"
     (copylib
         (prompt ("Installing " @each-name " into DEVS:USBClasses/"))
         (help @copylib-help)
@@ -300,6 +300,11 @@
         (delete #dv_file (optional "force" "nofail")))
 )
 
+; P_oldclass - the name a class had up to 6.3 development: "hid.usbclass" -> "hid.class".
+(procedure P_oldclass #oc_name
+    (cat (substr #oc_name 0 (- (strlen #oc_name) 9)) ".class")
+)
+
 ; P_del - delete a file or an empty drawer, if present (a drawer that is not empty stays).
 (procedure P_del #dl_file
     (if (exists #dl_file (noreq))
@@ -326,8 +331,8 @@
             (P_delv6 "LIBS:poseidon.library")
             ; Driven off the archive's class list (a superset of every 6.x class), so the
             ; drawer being emptied is not also the one being scanned.
-            (foreach "DEVS/USBClasses" "#?.class"
-                (P_delv6 (tackon "SYS:Classes/USB" @each-name)))
+            (foreach "DEVS/USBClasses" "#?.usbclass"
+                (P_delv6 (tackon "SYS:Classes/USB" (P_oldclass @each-name))))
             (P_del "SYS:Classes/USB")
             (P_delv6 "C:PsdStackLoader")
             (P_delv6 "C:PsdDevLister")
@@ -360,6 +365,11 @@
 (P_delv6 "SYS:Tools/RocketTool")
 (P_delv6 "SYS:Tools/SonixcamTool")
 (P_delv6 "SYS:Tools/UPSTool")
+
+; Classes are <name>.usbclass now; 6.x copies under the old <name>.class in the class drawer
+; (left by a 6.3 development install) go. The drawer scan would skip them anyway.
+(foreach "DEVS/USBClasses" "#?.usbclass"
+    (P_delv6 (tackon "DEVS:USBClasses" (P_oldclass @each-name))))
 
 ;==========================================================================
 ; Auto-start

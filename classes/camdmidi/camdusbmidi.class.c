@@ -178,7 +178,7 @@ struct NepClassMidi * usbForceInterfaceBinding(struct NepMidiBase *nh, struct Ps
             nch->nch_Device = NULL;
             nch->nch_Interface = pif;
 
-            psdSafeRawDoFmt(buf, 64, "camdusbmidi.class<%08lx>", nch);
+            psdSafeRawDoFmt(buf, 64, CLASS_NAME "<%08lx>", nch);
             nch->nch_ReadySignal = SIGB_SINGLE;
             nch->nch_ReadySigTask = FindTask(NULL);
             SetSignal(0, SIGF_SINGLE);

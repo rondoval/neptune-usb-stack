@@ -64,6 +64,10 @@ int libInit(struct NepEthBase * nh)
 {
     struct NepClassEth *ncp;
 
+    if (nDevNameTaken(DEVNAME)) {
+        return FALSE;
+    }
+
     nh->nh_UtilityBase = OpenLibrary("utility.library", 39);
 
 #define UtilityBase nh->nh_UtilityBase
@@ -244,7 +248,7 @@ struct NepClassEth *usbForceDeviceBinding(struct NepEthBase *nh, struct PsdDevic
     ncp->ncp_UnitNo = unitno;
     Permit();
 
-    psdSafeRawDoFmt(buf, sizeof(buf), "lan78xx.class<%08lx>", ncp);
+    psdSafeRawDoFmt(buf, sizeof(buf), CLASS_NAME "<%08lx>", ncp);
     ncp->ncp_ReadySignal = SIGB_SINGLE;
     ncp->ncp_ReadySigTask = FindTask(NULL);
     SetSignal(0, SIGF_SINGLE);

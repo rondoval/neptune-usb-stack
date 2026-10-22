@@ -14,8 +14,8 @@ add_executable(neptune_library
     notify.gui.c
 )
 
-# Headers must exist before we compile: our own neptune.sfd + usbclass's (we call usbDoMethodA).
-add_dependencies(neptune_library neptune_sfd_headers usbclass_sfd_headers)
+# Headers must exist before we compile: our own neptune.sfd + neptune_class's (we call usbDoMethodA).
+add_dependencies(neptune_library neptune_sfd_headers neptune_class_sfd_headers)
 
 # The stack core: -O3. -ffreestanding must be a COMPILE option - as a link-only flag it is
 # silently inert. Shared flags come from the toolchain + the root add_compile_options().
@@ -27,13 +27,13 @@ target_include_directories(neptune_library PRIVATE
     ${CMAKE_SOURCE_DIR}/include          # public ABI headers (libraries/, devices/)
     ${CMAKE_CURRENT_SOURCE_DIR})         # neptune_intern.h, debug.h, ...
 
-# neptune_headers + usbclass_headers (INTERFACE) bring the generated-include dirs;
+# neptune_headers + neptune_class_headers (INTERFACE) bring the generated-include dirs;
 # mui_headers brings the MUI 5 SDK include dir (notify.gui.c). -lc (libnix string fns),
 # -lamiga (BOOPSI DoMethod/set/get used by the notifier's MUI tree), -lgcc (intrinsics). The
 # serial debug backend appends -ldebug (+ a weak __divsi3 glue object) via
 # nep_debug_finalize() below; pistorm/off link neither.
 target_link_libraries(neptune_library PRIVATE
-    neptune_headers usbclass_headers mui_headers
+    neptune_headers neptune_class_headers mui_headers
     -Wl,--start-group -lc -lamiga -lgcc -Wl,--end-group)
 
 target_link_options(neptune_library PRIVATE

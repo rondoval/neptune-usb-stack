@@ -1,6 +1,6 @@
-# usbaudio.class - Architecture
+# usbaudio.usbclass - Architecture
 
-> **Scope:** `usbaudio.class`, the USB Audio Class 1.0 driver, and `usbaudio.audio`, the AHI
+> **Scope:** `usbaudio.usbclass`, the USB Audio Class 1.0 driver, and `usbaudio.audio`, the AHI
 > sub-driver built into the same binary. It is a client of `neptune.library`; read
 > [neptune.library-architecture.md](neptune.library-architecture.md) first (class binding §5.5,
 > lock borrowing §4.2, disconnect §5.4). The clock-driven iso hooks a context HCD runs the streams
@@ -16,7 +16,7 @@
 
 ## 1. Purpose
 
-`usbaudio.class` turns a USB Audio device into an AHI sound card. It has four jobs:
+`usbaudio.usbclass` turns a USB Audio device into an AHI sound card. It has four jobs:
 
 1. **Understand the device.** Bind the Audio Control interface, read the formats of its
    AudioStreaming interfaces and the unit graph (terminals, feature, selector, mixer and other
@@ -41,7 +41,7 @@ mixes every channel in software and the driver converts and ships the result.
 flowchart TB
     APP["AHI programs"]
     AHI["ahi.device - mode database, software mixer"]
-    subgraph BIN["usbaudio.class binary"]
+    subgraph BIN["usbaudio.usbclass binary"]
         CLS["class side - usbclass methods, binding task, GUI"]
         SUB["usbaudio.audio - AHI sub-driver vectors"]
     end
@@ -128,7 +128,7 @@ flowchart TB
 ```mermaid
 sequenceDiagram
     participant CORE as neptune.library
-    participant DISP as usbaudio.class dispatcher
+    participant DISP as usbaudio.usbclass dispatcher
     participant T as binding task
 
     CORE->>DISP: UCM_AttemptInterfaceBinding (Audio Control interface)

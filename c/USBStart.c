@@ -111,7 +111,7 @@ int main(void)
 
         /* Applies what the prefs list and ends in the class scan. That scan is
            the first one from a process, which is what hands the keyboard and
-           mouse of a ROM-started stack over from the boot classes to hid.class
+           mouse of a ROM-started stack over from the boot classes to hid.usbclass
            - so the classes have to be loaded before this point. */
         psdParseCfg();
 

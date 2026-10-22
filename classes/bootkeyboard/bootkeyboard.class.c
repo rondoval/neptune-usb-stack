@@ -104,7 +104,7 @@ struct NepClassHid * bootkbd_ForceInterfaceBinding(struct NepHidBase *nh, struct
 
             bootkbd_LoadClassConfig(nh);
 
-            psdSafeRawDoFmt(buf, 64, "bootkeyboard.class<%08lx>", nch);
+            psdSafeRawDoFmt(buf, 64, CLASS_NAME "<%08lx>", nch);
             nch->nch_ReadySignal = SIGB_SINGLE;
             nch->nch_ReadySigTask = FindTask(NULL);
             SetSignal(0, SIGF_SINGLE);
@@ -983,7 +983,7 @@ void bootkbd_GUITask()
         MUIA_Application_Version    , (IPTR)VERSION_STRING,
         MUIA_Application_Copyright  , (IPTR)"(C) 2002-2009 Chris Hodges",
         MUIA_Application_Author     , (IPTR)"Chris Hodges <chrisly@platon42.de>",
-        MUIA_Application_Description, (IPTR)"Settings for the bootkeyboard.class",
+        MUIA_Application_Description, (IPTR)"Settings for the " CLASS_NAME,
         MUIA_Application_Base       , (IPTR)"BOOTKEYBOARD",
         MUIA_Application_HelpFile   , (IPTR)"HELP:Neptune.guide",
         MUIA_Application_Menustrip  , (IPTR)MenustripObject,

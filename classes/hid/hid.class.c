@@ -138,7 +138,7 @@ int libExpunge(struct NepHidBase * nh)
 
     FreeVec(nh->nh_DummyNCH.nch_CDC);
 
-    KPRINTF(5, ("libExpunge: Unloading done! hid.class expunged!\n\n"));
+    KPRINTF(5, ("libExpunge: Unloading done! hid.usbclass expunged!\n\n"));
 
     return(TRUE);
 }
@@ -225,7 +225,7 @@ struct NepClassHid * usbForceInterfaceBinding(struct NepHidBase *nh, struct PsdI
 
             nLoadBindingConfig(nch, FALSE);
 
-            psdSafeRawDoFmt(buf, 64, "hid.class<%08lx>", nch);
+            psdSafeRawDoFmt(buf, 64, CLASS_NAME "<%08lx>", nch);
             nch->nch_ReadySignal = SIGB_SINGLE;
             nch->nch_ReadySigTask = FindTask(NULL);
             SetSignal(0, SIGF_SINGLE);
@@ -438,7 +438,7 @@ IPTR (usbDoMethodA)(ULONG methodid asm("d0"), IPTR * methoddata asm("a1"), struc
             nch = (struct NepClassHid *) methoddata[0];
             nch->nch_Running = FALSE;
             /* Quiesce the int-IN pipe before SET_SUSPEND(1) parks the rings
-               (mirrors hub.class).  No psdWaitPipe here: this runs in the
+               (mirrors hub.usbclass).  No psdWaitPipe here: this runs in the
                caller's task, the reply lands on the hid task's port and its
                loop reaps it; resume resubmits. */
             if(nch->nch_EPInPipe)
@@ -1269,7 +1269,7 @@ struct NepClassHid * nAllocHid(void)
                             {
                                 struct TagItem usbd_tags[] =
                                 {
-                                    {aHidd_Name,               (IPTR)"hid.class"       },
+                                    {aHidd_Name,               (IPTR)"hid.usbclass"       },
                                     {aHidd_HardwareName,        (IPTR)"USB Human Interface Device"       },
                                     {aHidd_Producer,            0       },
                             #define USBD_TAG_VEND 2
