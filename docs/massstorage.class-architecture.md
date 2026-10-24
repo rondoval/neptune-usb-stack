@@ -405,8 +405,10 @@ flowchart TD
 - **Naming.** A recipe name gets a unit digit and is bumped past collisions (`fix_name_collision`);
   a volume whose device, unit and extent already have a node is skipped (`is_extent_mounted`).
 - **DMA alignment.** The bind caches the HCD's `HA_DMAAlignment`. When it is above 1 the mounter
-  sets `de_Mask` and `de_BufMemType` so DOS buffers stay on the HCD's direct-DMA path instead of
-  being bounced (see [massstorage-throughput.md](massstorage-throughput.md)).
+  narrows `de_Mask` to it and puts the buffer cache in Fast memory, meant to keep DOS buffers on
+  the HCD's direct-DMA path; `de_BufMemType` also carries `MEMF_CLEAR`. Both backfire - filesystems
+  fall back to small or cached transfers, and PFS3 can hang - and are to go
+  ([massstorage-throughput.md](massstorage-throughput.md) §4, §5.1).
 - **Auto-unmount** (`nUnmountPartition`) runs from the removable task when a unit is gone: it sends
   inhibit and die blind to every handler riding the unit, removes the DOS node and unlinks any stale
   boot node. Nobody is left to veto.
