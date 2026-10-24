@@ -9,6 +9,18 @@
 
 #include "printer.class.h"
 
+/* Bulk-in stream setup, see the psdOpenStreamA() call in nAllocPrinter(). */
+static const struct TagItem EPInStreamTags[] =
+{
+    { PSA_BufferSize,       1024            },
+    { PSA_ReadAhead,        FALSE           },
+    { PSA_BufferedRead,     TRUE            },
+    { PSA_ShortPktTerm,     TRUE            },
+    { PSA_NakTimeout,       TRUE            },
+    { PSA_NakTimeoutTime,   1000            },
+    { TAG_END,              0               }
+};
+
 /* /// "Lib Stuff" */
 static const STRPTR libname = CLASS_NAME;
 
@@ -803,14 +815,12 @@ struct NepClassPrinter * nAllocPrinter(void)
                         ncp->ncp_Task = thistask;
                         return(ncp);
                     }
-                    if((ncp->ncp_EPInStream = psdOpenStream(ncp->ncp_EPIn,
-                                                           PSA_BufferSize, 1024,
-                                                           PSA_ReadAhead, FALSE,
-                                                           PSA_BufferedRead, TRUE,
-                                                           PSA_ShortPktTerm, TRUE,
-                                                           PSA_NakTimeout, TRUE,
-                                                           PSA_NakTimeoutTime, 1000,
-                                                           TAG_END)))
+                    /* Static taglist, not the vararg form: every value here is a
+                       compile-time constant, and the sfdc vararg inline builds a
+                       *local* array, which gcc materialises as a writable template in
+                       .data. */
+                    if((ncp->ncp_EPInStream = psdOpenStreamA(ncp->ncp_EPIn,
+                                                            (struct TagItem *)EPInStreamTags)))
                     {
                         ncp->ncp_Task = thistask;
                         return(ncp);

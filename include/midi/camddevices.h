@@ -20,9 +20,11 @@
 /* camd's transmit and receive functions, as OpenPort hands them to the driver.
  * Transmit: A2 = userdata; returns the next byte in D0 and, under V37, D1 != 0 when it was
  * the last one - a 64-bit return, which gcc passes in D0 (high half) and D1 (low half).
- * Receive: D0 = the received byte (bit 15 = overrun), A2 = userdata. */
+ * Receive: D0 = the received byte (bit 15 = overrun), A2 = userdata. camd is not gcc code and
+ * may read all of D0, so the input is passed as a full register: gcc loads a narrower
+ * asm("d0") argument with a .w move and leaves the upper half undefined. */
 typedef unsigned long long (*CAMDXmitFunc)(APTR userdata asm("a2"));
-typedef void (*CAMDRecvFunc)(UWORD input asm("d0"), APTR userdata asm("a2"));
+typedef void (*CAMDRecvFunc)(ULONG input asm("d0"), APTR userdata asm("a2"));
 
 struct MidiPortData {
     /* Called by camd when it has output queued. The camds disagree on the registers - V37:
