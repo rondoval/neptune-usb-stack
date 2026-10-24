@@ -159,8 +159,8 @@ function(add_neptune_class name)
 endfunction()
 
 # --- Compile flags ---------------------------------------------------------------
-# The CPU/FPU/CRT flags (-m${M68K_CPU} -m${M68K_FPU}-float -fomit-frame-pointer -mcrt=nix20
-# and -Wno-array-bounds) come from cmake/toolchain.cmake - the release builds this tree once
+# The CPU/FPU/CRT flags (-m${M68K_CPU} -m${M68K_FPU}-float -fomit-frame-pointer -mcrt=nix20)
+# come from cmake/toolchain.cmake - the release builds this tree once
 # per CPU. These two apply to every TU in the tree; each target adds only its own -O level
 # (library + classes -O3, NeptuneUSB -O2, the CLI programs -Os) and, where it is freestanding,
 # -ffreestanding.
