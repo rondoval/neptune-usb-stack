@@ -130,6 +130,10 @@ interface once in the MIDI Ports editor.
 
 ## Bug fixes
 
+* **FAT sticks and drives** read and write several times faster. Copying a 64 MB file from a
+  USB 3 stick to `RAM:` went from 2.8 to 18.7 MB/s, and a drawer of 594 small files copies to
+  the stick in 12 s instead of 47 s. Mass storage no longer mounts volumes with settings that
+  kept fat95 off its fast path (GH #24).
 * Rare crashes and freezes under heavy load.
 * **Behringer UMC204HD** now works, and its MIDI port appears once instead of twice.
 * **NTFS and exFAT:** The filesystem stack size is now a setting in the mass storage settings.

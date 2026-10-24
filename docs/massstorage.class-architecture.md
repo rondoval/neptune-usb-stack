@@ -404,11 +404,13 @@ flowchart TD
   RDB partitions keep their own names and environment.
 - **Naming.** A recipe name gets a unit digit and is bumped past collisions (`fix_name_collision`);
   a volume whose device, unit and extent already have a node is skipped (`is_extent_mounted`).
-- **DMA alignment.** The bind caches the HCD's `HA_DMAAlignment`. When it is above 1 the mounter
-  narrows `de_Mask` to it and puts the buffer cache in Fast memory, meant to keep DOS buffers on
-  the HCD's direct-DMA path; `de_BufMemType` also carries `MEMF_CLEAR`. Both backfire - filesystems
-  fall back to small or cached transfers, and PFS3 can hang - and are to go
-  ([massstorage-throughput.md](massstorage-throughput.md) §4, §5.1).
+- **DMA alignment.** The bind caches the HCD's `HA_DMAAlignment` and passes it as the mounter's
+  `dmaAlign`. When it is above 1, recipe mounts get `de_BufMemType = MEMF_FAST|MEMF_PUBLIC`, which
+  keeps the filesystem's own buffers out of Chip RAM; otherwise `MEMF_ANY`. `de_Mask` is always
+  `0x7FFFFFFE`: no filesystem can honour an alignment set through the mask, and the HCD bounces
+  misaligned or unreachable buffers itself. RDB partitions keep the RDB's values. Until 6.3 the mask
+  was narrowed to the alignment and `MEMF_CLEAR` was set, which cost fat95 most of its speed
+  ([massstorage-throughput.md](massstorage-throughput.md) §4, §1.3).
 - **Auto-unmount** (`nUnmountPartition`) runs from the removable task when a unit is gone: it sends
   inhibit and die blind to every handler riding the unit, removes the DOS node and unlinks any stale
   boot node. Nobody is left to veto.
