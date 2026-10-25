@@ -147,6 +147,9 @@ interface once in the MIDI Ports editor.
 * **USB floppy drives and other CBI devices** no longer stop responding after a failed
   command.
 * Possible crash on disk change with several partitions.
+* **USB drives** come back after Restart in Neptune USB, and when every drive has gone away and
+  one returns within seconds (a quick replug, a hub power cycle); their volumes used to stay
+  missing.
 * Automatic restart of a USB device that stopped responding now also works with notifications
   switched off, before Workbench and from ROM.
 * USB audio and video devices could be kept from power saving after a program quit without

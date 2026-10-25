@@ -149,8 +149,10 @@ the unit task drains its tags, fires the disk-change interrupts, fails everythin
 its pipes. The removable task is (re)started by every unit task whose unit is removable or flagged
 `ncm_ForceRTCheck` (`nStartRemovableTask` is idempotent). Pre-DOS it is a plain Task that never
 exits; when `dos.library` appears it retires and the unit tasks respawn it as a Process, which makes
-`DoPkt` legal. After that it exits once no unit is alive; a fixed disk's teardown restarts it so
-the auto-unmount runs.
+`DoPkt` legal. After that it runs until the class is expunged, also with no unit left: a unit
+bound while it was leaving would find it still there and never be mounted, and a fixed disk asks
+only once. A fixed disk's teardown starts it when nothing has since DOS arrived, so the
+auto-unmount runs.
 
 ---
 
