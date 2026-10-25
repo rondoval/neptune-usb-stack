@@ -450,7 +450,9 @@ covering extra LUNs and extra storage interfaces.
 `UCM_AttemptSuspendDevice` **refuses rather than drains**: it fails while a synchronous command is
 on the wire (`ncm_CmdBusy`), a UAS tag is busy or quarantined, or a sibling LUN holds the transfer
 lock. Otherwise it clears `ncm_Running`, which stops the media polling. Queued I/O needs nothing:
-`psdDoPipe` resumes the device. Resume sets `ncm_Running` and wakes the unit task. When to suspend
+`psdDoPipe` resumes the device, and a command that starts after the answer, while the library is
+still suspending, either calls the suspend off or gets the device woken for it (core doc §5.9).
+Resume sets `ncm_Running` and wakes the unit task. When to suspend
 is the library's policy (core doc §5.10).
 
 ### 5.11 Configuration

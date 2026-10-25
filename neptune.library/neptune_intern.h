@@ -474,6 +474,8 @@ struct PsdDevice
     UWORD               pd_CloneCount;    /* Running Number to distinguish same devices */
     UWORD               pd_DeadCount;     /* Number of timeouts on the device */
     UWORD               pd_IOBusyCount;   /* Busy IO: transfers in flight on pipes with pp_BusyWeight 1 (not interrupt listeners) + running RT-ISO streams */
+    UBYTE               pd_Suspending;    /* psdSuspendDevice() is past its bindings' consent and not yet done (pTransferBegin) */
+    UBYTE               pd_WakeWanted;    /* a transfer started while pd_Suspending: wake the device once it is parked */
     ULONG               pd_EpHaltMask;    /* Endpoints owed a CLEAR_FEATURE(ENDPOINT_HALT): bit 1-15 =
                                              OUT EPn, bit 17-31 = IN EPn (PDEPHALT_* above).  Set at completion delivery
                                              (pCompletePipe), consumed by the event task's stall

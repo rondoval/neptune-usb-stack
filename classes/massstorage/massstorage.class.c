@@ -1170,9 +1170,10 @@ IPTR (usbDoMethodA)(ULONG methodid asm("d0"), IPTR * methoddata asm("a1"), struc
                refuse-while-streaming): SET_SUSPEND(1) would park the rings
                under them.  ncm_CmdBusy = sync funnel depth, UAS tags = the
                async QD>1 engine, XFerLock = a sibling LUN mid-command.
-               Queued-but-unstarted IO is fine - psdDoPipe auto-resumes.
-               The tiny agree-to-park window that remains is bounded by the
-               HCD (aborts complete on suspended endpoints). */
+               Queued-but-unstarted IO is fine - psdDoPipe auto-resumes,
+               and a command that starts after this answer either calls
+               the suspend off or wakes the device the moment it is
+               parked (neptune.library pTransferBegin). */
             if(ncm->ncm_CmdBusy || !nUasTagsIdle(ncm))
             {
                 return(FALSE);

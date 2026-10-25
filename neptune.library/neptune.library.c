@@ -4857,8 +4857,12 @@ BOOL (psdSuspendDevice)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm
     struct PsdUsbClass *puc;
     struct PsdDevice *hubpd;
     APTR binding;
-    BOOL res = FALSE;
-    BOOL agreed = FALSE;
+    BOOL ok = FALSE;        /* no step has failed yet; each runs only while set.
+                               Returned: the device is suspended */
+    BOOL agreed = FALSE;    /* the bindings agreed to suspend */
+    BOOL marked = FALSE;    /* pd_Suspending raised, to be lowered at the end */
+    BOOL parked = FALSE;    /* the parent hub was asked to park the port */
+    BOOL calledoff = FALSE; /* a transfer started: not a failure */
 
     KPRINTF(5, ("psdSuspendDevice(0x%08lx)\n", pd));
     if(pd) {
@@ -4877,31 +4881,49 @@ BOOL (psdSuspendDevice)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm
         hubpd = pd->pd_Hub;
 
         psdLockWriteDevice(pd);
-        res = agreed = psdSuspendBindings(pd);
+        ok = agreed = psdSuspendBindings(pd);
         psdUnlockDevice(pd);
-        if(res && hubpd) {
+        if(ok && hubpd) {
             /* wake arming needs a live EP0 - before the ring quiesce below.
                Skipped for a root hub: its EP0 is emulated inside the HCD and
                there is no upstream link it could wake the host over. */
             pArmRemoteWakeup(ps, pd);
         }
-        if(res && pd->pd_Hardware->phw_ContextBackend) {
+        if(ok) {
+            /* The bindings answered for the IO running when they were asked.
+               A transfer that started since then calls the suspend off, and
+               from here one that starts wakes the device once it is parked
+               (pTransferBegin): the mark goes up before the count is read,
+               the reverse of a transfer's order, so each one is either
+               counted here or sees the mark.  After the wake arming, whose
+               own transfers are done by now, and after the bindings, so a
+               hub's suspend of its ports over its own EP0 does not count. */
+            pd->pd_Suspending = TRUE;
+            marked = TRUE;
+            __asm__ __volatile__("" ::: "memory");
+            if(pd->pd_IOBusyCount) {
+                ok = FALSE;
+                calledoff = TRUE;
+            }
+        }
+        if(ok && pd->pd_Hardware->phw_ContextBackend) {
             /* quiesce the endpoint rings before the hub class parks the port
                in U3 (xHCI 4.15.1) */
             struct UhcdSetSuspend sso;
             memset(&sso, 0, sizeof(sso));
             sso.sso_DeviceHandle = pd->pd_Handle;
             sso.sso_Suspend = 1;
-            res = (pCtxDoOpOnDevice(ps, pd, NSCMD_USB_SET_SUSPEND, &sso, sizeof(sso)) == 0);
+            ok = (pCtxDoOpOnDevice(ps, pd, NSCMD_USB_SET_SUSPEND, &sso, sizeof(sso)) == 0);
         }
-        if(res) {
+        if(ok) {
             /* Only the hub class writes DA_IsSuspended, so if it never runs the
                device is not suspended, however well the steps above went. */
-            res = FALSE;
+            ok = FALSE;
             if(hubpd) {
                 psdLockReadDevice(pd);
                 if((binding = hubpd->pd_DevBinding) && (puc = hubpd->pd_ClsBinding)) {
-                    res = usbDoMethod(UCM_HubSuspendDevice, binding, pd);
+                    parked = TRUE;
+                    ok = usbDoMethod(UCM_HubSuspendDevice, binding, pd);
                 }
                 psdUnlockDevice(pd);
             } else {
@@ -4926,10 +4948,10 @@ BOOL (psdSuspendDevice)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm
                    not the whole controller. */
                 psdSetAttrs(PGA_DEVICE, pd, DA_IsSuspended, TRUE, TAG_END);
                 psdSendEvent(EHMB_DEVSUSPENDED, pd, NULL);
-                res = TRUE;
+                ok = TRUE;
             }
         }
-        if(!res) {
+        if(!ok) {
             /* Roll back. Any failure above - a binding that refused halfway
                through psdSuspendBindings(), a failed ring quiesce, a parent hub
                with no class binding, a hub that could not park the port - leaves
@@ -4944,11 +4966,13 @@ BOOL (psdSuspendDevice)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm
                reach psdHubReleaseDevBinding(), which takes psdLockWriteDevice()
                on this same device, and a shared->exclusive promotion only
                succeeds for the sole reader. */
-            if(hubpd && (hubpd->pd_Flags & PDFF_CONNECTED)) {
+            if(parked && (hubpd->pd_Flags & PDFF_CONNECTED)) {
                 /* the park may have been delivered even though the transfer
-                   reported an error - unpark before resuming. Skipped for a hub
-                   that is already gone: it would only cost another timeout, and
-                   for a root hub, which has no parent to unpark. */
+                   reported an error - unpark before resuming. A port never
+                   asked to park (a refusal, a failed quiesce, a suspend called
+                   off) is left alone, and so is a hub that is already gone: it
+                   would only cost another timeout. A root hub has no parent to
+                   unpark. */
                 psdLockReadDevice(pd);
                 if((binding = hubpd->pd_DevBinding) && (puc = hubpd->pd_ClsBinding)) {
                     usbDoMethod(UCM_HubResumeDevice, binding, pd);
@@ -4959,15 +4983,37 @@ BOOL (psdSuspendDevice)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm
                idempotent, so it is the whole binding + ring rollback. */
             psdResumeBindings(pd);
         }
+
+        if(marked) {
+            /* A transfer that started while the device was being suspended
+               waits on a quiesced ring: wake the device for it, and report it
+               awake - a hub suspending its ports must not park itself above
+               it.  After a roll back it is running already.  Collected under
+               Forbid(), as pTransferBegin() leaves it. */
+            Forbid();
+            pd->pd_Suspending = FALSE;
+            BOOL wake = pd->pd_WakeWanted;
+            pd->pd_WakeWanted = FALSE;
+            Permit();
+            if(wake && ok && psdResumeDevice(pd)) {
+                ok = FALSE;
+                calledoff = TRUE;
+            }
+        }
     }
     /* A binding that would not have it has said so itself
-       (psdSuspendBindings); what failed after the bindings agreed has not. */
-    if(pd && agreed && !res) {
+       (psdSuspendBindings); a transfer that called it off is no failure;
+       what failed after the bindings agreed has not been reported yet. */
+    if(calledoff) {
+        psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
+                       "Not suspending '%s': a transfer started.",
+                       pd->pd_ProductStr);
+    } else if(pd && agreed && !ok) {
         psdAddErrorMsg(RETURN_ERROR, (STRPTR) libname,
                        "Suspending of device '%s' failed.",
                        pd->pd_ProductStr);
     }
-    return(res);
+    return ok;
 }
 /* \\\ */
 
@@ -6070,6 +6116,80 @@ static inline void pActivityEnd(struct PsdPipe *pp, struct PsdBase *ps)
 }
 /* \\\ */
 
+/* /// "Transfer start vs suspend" */
+/* A transfer counts itself busy (pActivityBegin) BEFORE it looks at the
+   device's power state, and psdSuspendDevice() raises pd_Suspending BEFORE
+   it reads the busy count: so each counted transfer is either seen there,
+   which calls the suspend off, or sees the mark.  None reaches a ring the
+   suspend quiesces unnoticed, where the HCD would keep it for a resume
+   nobody asks for.  A transfer that finds the device suspended wakes it;
+   one that finds it being suspended leaves pd_WakeWanted, and
+   psdSuspendDevice() wakes the device the moment it is parked, the
+   transfer waiting on the quiesced ring meanwhile.
+   The transfer reads the mark before PDFF_SUSPENDED, the reverse of the
+   suspend, which sets the flag (the park) before it lowers the mark: a mark
+   read low and gone already means the flag is read set.  Read the other
+   way round, a suspend running between the two reads gets past both.
+   Compiler barriers order all of this: there is one CPU, it takes an
+   interrupt, and so a task switch, only between 68k instructions.
+   Interrupt transfers are not counted (pp_BusyWeight 0): a listener parked
+   across a suspend is meant to be, and a synchronous one started before
+   the mark ends at its NAK timeout, if its pipe has one. */
+
+/* Take back a pActivityBegin() whose transfer did not go out. */
+static inline void pActivityUndo(struct PsdPipe *pp)
+{
+    pp->pp_Flags &= ~PFF_ACTIVITY;
+    pp->pp_Device->pd_IOBusyCount -= pp->pp_BusyWeight;
+}
+
+/**
+ * pTransferBegin - account a transfer's start and wake its device for it
+ * @pp: the pipe the transfer goes out on
+ * @ps: library base
+ *
+ * Call right before the submit, and before data and length are filled in:
+ * the wake can run transfers on this very pipe.  (Those also overwrite the
+ * setup packet, which callers set before; a hub's resume only repeats an
+ * unpark that way.)  pCompletePipe() balances the
+ * count at completion delivery.  The common case, a device awake and not
+ * being suspended, costs one test.  The note for psdSuspendDevice() is left
+ * under Forbid(), as it is collected, so neither slips past the other.
+ */
+static void pTransferBegin(struct PsdPipe *pp, struct PsdBase *ps)
+{
+    struct PsdDevice *pd = pp->pp_Device;
+    BOOL woken = FALSE;
+
+    for(;;) {
+        pActivityBegin(pp, ps);
+        __asm__ __volatile__("" ::: "memory"); /* the count is out before the state is read */
+        BOOL suspending = pd->pd_Suspending;
+        __asm__ __volatile__("" ::: "memory"); /* the mark before the flag: see above */
+        if(!suspending && !(pd->pd_Flags & PDFF_SUSPENDED)) {
+            return;
+        }
+        Forbid();
+        if(pd->pd_Suspending) {
+            pd->pd_WakeWanted = TRUE;
+            Permit();
+            return;
+        }
+        Permit();
+        if(woken) {
+            return; /* the resume did not take: go on, as ever */
+        }
+        /* Suspended: wake it with this transfer uncounted, then count it
+           again.  The resume can run transfers on this very pipe - a hub's
+           class unparks its ports over its EP0 - and each of them pairs
+           its own count through PFF_ACTIVITY. */
+        pActivityUndo(pp);
+        psdResumeDevice(pd);
+        woken = TRUE;
+    }
+}
+/* \\\ */
+
 /* Note a halted bulk/interrupt endpoint at completion delivery: most classes
  * never send the CLEAR_FEATURE(ENDPOINT_HALT) the device needs, so the
  * event handler task clears it on their behalf (pStallRecoverySweep).  The
@@ -6306,19 +6426,16 @@ LONG (psdDoPipe)(struct PsdPipe * pp asm("a1"), APTR data asm("a0"), ULONG len a
     KPRINTF(2, ("psdDoPipe(0x%08lx, 0x%08lx, %ld)\n", pp, data, len));
 
     if(pd->pd_Flags & PDFF_CONNECTED) {
-        if(pd->pd_Flags & PDFF_SUSPENDED) {
-            // make sure the device is up and running before trying to send a new pipe
-            psdResumeDevice(pd);
-        }
-
+        /* Begin before the submit: a synchronously completed (or rejected)
+           transfer delivers its balancing pActivityEnd() from pCompletePipe().
+           It also wakes a suspended device, which can use this pipe, so data
+           and length are filled in after it. */
+        pTransferBegin(pp, ps);
         pp->pp_IOReq.iouh_Data = data;
         pp->pp_IOReq.iouh_Length = len;
         if(!pp->pp_Endpoint) {
             pp->pp_IOReq.iouh_SetupData.wLength = AROS_WORD2LE(len);
         }
-        /* Begin before the submit: a synchronously completed (or rejected)
-           transfer delivers its balancing pActivityEnd() from pCompletePipe() */
-        pActivityBegin(pp, ps);
         pSubmitPipe(pp, ps);
         return(psdWaitPipe(pp));
     } else {
@@ -6336,17 +6453,12 @@ void (psdSendPipe)(struct PsdPipe * pp asm("a1"), APTR data asm("a0"), ULONG len
     struct PsdDevice *pd = pp->pp_Device;
     KPRINTF(2, ("psdSendPipe(0x%08lx, 0x%08lx, %ld)\n", pp, data, len));
     if(pd->pd_Flags & PDFF_CONNECTED) {
-        if(pd->pd_Flags & PDFF_SUSPENDED) {
-            // make sure the device is up and running before trying to send a new pipe
-            psdResumeDevice(pd);
-        }
-
+        pTransferBegin(pp, ps);  /* before the submit, data and length: see psdDoPipe() */
         pp->pp_IOReq.iouh_Data = data;
         pp->pp_IOReq.iouh_Length = len;
         if(!pp->pp_Endpoint) {
             pp->pp_IOReq.iouh_SetupData.wLength = AROS_WORD2LE(len);
         }
-        pActivityBegin(pp, ps);  /* before the submit: see psdDoPipe() */
         pSubmitPipe(pp, ps);
     } else {
         psdDelayMS(50);
@@ -7154,8 +7266,10 @@ LONG (psdGetStreamError)(struct PsdPipeStream * pps asm("a1"), struct PsdBase * 
  * device-removal hub task via the RT-ISO release hook on unplug).  A running stream counts
  * as busy IO, so the command takes the normal pActivityBegin()/delivery-End pair, matching
  * the original DoIO-era accounting; the stamps are wanted too: a STOP marks the end of the
- * stream's activity, so the device gets its full idle timeout before the sweep looks at it. */
-static LONG pRtIsoForwardCmd(struct PsdPipe *pp, struct PsdBase *ps)
+ * stream's activity, so the device gets its full idle timeout before the sweep looks at it.
+ * wake: the command starts a stream, which wakes the device as a transfer does
+ * (pTransferBegin); the others leave a suspended device asleep. */
+static LONG pRtIsoForwardCmd(struct PsdPipe *pp, struct PsdBase *ps, BOOL wake)
 {
     struct MsgPort *port = CreateMsgPort();
     LONG ioerr;
@@ -7163,7 +7277,11 @@ static LONG pRtIsoForwardCmd(struct PsdPipe *pp, struct PsdBase *ps)
         return(UHIOERR_OUTOFMEMORY);
     }
     pp->pp_MsgPort = pp->pp_Msg.mn_ReplyPort = port;
-    pActivityBegin(pp, ps);            /* balanced by pCompletePipe() at completion delivery */
+    if(wake) {                         /* balanced by pCompletePipe() at completion delivery */
+        pTransferBegin(pp, ps);
+    } else {
+        pActivityBegin(pp, ps);
+    }
     pSubmitPipe(pp, ps);               /* quick: BeginIO+IOF_QUICK; else relay PutMsg */
     ioerr = psdWaitPipe(pp);
     pp->pp_MsgPort = pp->pp_Msg.mn_ReplyPort = NULL;
@@ -7208,7 +7326,7 @@ struct PsdRTIsoHandler * (psdAllocRTIsoHandlerA)(struct PsdEndpoint * pep asm("a
             psdSetAttrsA(PGA_RTISO, prt, tags);
             pp->pp_IOReq.iouh_Req.io_Command = UHCMD_ADDISOHANDLER;
             pp->pp_IOReq.iouh_Data = &prt->prt_RTIso;
-            ioerr = pRtIsoForwardCmd(pp, ps);
+            ioerr = pRtIsoForwardCmd(pp, ps, FALSE);
             if(!ioerr) {
                 Forbid();
                 AddTail(&prt->prt_Device->pd_RTIsoHandlers, &prt->prt_Node);
@@ -7245,7 +7363,7 @@ void (psdFreeRTIsoHandler)(struct PsdRTIsoHandler * prt asm("a1"), struct PsdBas
         prt->prt_Running = FALSE;
     }
     pp->pp_IOReq.iouh_Req.io_Command = UHCMD_REMISOHANDLER;
-    pRtIsoForwardCmd(pp, ps);
+    pRtIsoForwardCmd(pp, ps, FALSE);
     psdFreePipe(pp);
     psdFreeVec(prt);
 }
@@ -7261,12 +7379,8 @@ LONG (psdStartRTIso)(struct PsdRTIsoHandler * prt asm("a1"), struct PsdBase * ps
         return UHIOERR_BADPARAMS;
     }
     pp = prt->prt_Pipe;
-    if(pp->pp_Device->pd_Flags & PDFF_SUSPENDED) {
-        // make sure the device is up and running before trying to send a new pipe
-        psdResumeDevice(pp->pp_Device);
-    }
     pp->pp_IOReq.iouh_Req.io_Command = UHCMD_STARTRTISO;
-    ioerr = pRtIsoForwardCmd(pp, ps);
+    ioerr = pRtIsoForwardCmd(pp, ps, TRUE);
     if(!ioerr && !prt->prt_Running) {
         /* not pActivityBegin(): this is a hold for the whole lifetime of the
            running stream, released by psdStopRTIso() or psdFreeRTIsoHandler(),
@@ -7290,7 +7404,7 @@ LONG (psdStopRTIso)(struct PsdRTIsoHandler * prt asm("a1"), struct PsdBase * ps 
     }
     pp = prt->prt_Pipe;
     pp->pp_IOReq.iouh_Req.io_Command = UHCMD_STOPRTISO;
-    ioerr = pRtIsoForwardCmd(pp, ps);
+    ioerr = pRtIsoForwardCmd(pp, ps, FALSE);
     if(!ioerr && prt->prt_Running) {
         --pp->pp_Device->pd_IOBusyCount;   /* release psdStartRTIso()'s lifetime hold */
         prt->prt_Running = FALSE;

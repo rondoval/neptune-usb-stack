@@ -138,6 +138,7 @@ interface once in the MIDI Ports editor.
 * **Behringer UMC204HD** now works, and its MIDI port appears once instead of twice.
 * **NTFS and exFAT:** The filesystem stack size is now a setting in the mass storage settings.
 * A busy device is no longer logged as a failed suspend.
+* A device used at the very moment power saving put it to sleep could stop responding.
 * No more "Adding RT Iso Handler failed" and silent audio after a device refused a setting
   change.
 * A hub could stop seeing new devices after one was unplugged, until a reboot.

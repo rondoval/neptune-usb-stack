@@ -477,17 +477,39 @@ flowchart TD
     R -->|"context HCD without SET_SUSPEND, or parent hub without a class"| NO["refuse, nothing touched"]
     R -->|"no"| B["psdSuspendBindings: UCM_AttemptSuspendDevice on every binding"]
     B -->|"refused"| RB
-    B -->|"agreed"| Q["arm remote wake (non-root), context: SET_SUSPEND(1) quiesces the rings"]
+    B -->|"agreed"| W["arm remote wake (non-root)"]
+    W --> M{"mark pd_Suspending, then: busy IO?"}
+    M -->|"yes: a transfer started"| RB
+    M -->|"no"| Q["context: SET_SUSPEND(1) quiesces the rings"]
     Q --> P{"root device?"}
     P -->|"no"| HUB["UCM_HubSuspendDevice: the hub task parks the port, sets the flag"]
     P -->|"yes"| ROOT["the library sets the flag, EHMB_DEVSUSPENDED"]
-    HUB -->|"failed"| RB["rollback: UCM_HubResumeDevice if the hub is still there, psdResumeBindings"]
+    HUB -->|"failed"| RB["rollback: UCM_HubResumeDevice if the park was tried and the hub is still there, psdResumeBindings"]
     Q -->|"failed"| RB
 ```
 
 - **Bindings.** A class that supports suspend may say no. A class that does not is passed over when
   no IO is in flight, otherwise the suspend is refused - unless `pgc_ForceSuspend` is on and the
   device can remote-wake, in which case the binding is released. An app binding is treated the same.
+- **Transfers that start meanwhile.** The bindings answer for the IO running when they are asked,
+  and psdDoPipe wakes only a device whose flag is set, which the hub class does last. So a transfer
+  starting in between would reach a ring about to be quiesced and wait there for a resume nobody
+  asks for. The two sides are ordered against each other (`pTransferBegin`): a transfer counts
+  itself busy before it reads the device's state, and the suspend raises `pd_Suspending` before it
+  reads the busy count. A transfer counted there calls the suspend off ("Not suspending ...: a
+  transfer started", no error); one that sees the mark leaves `pd_WakeWanted`, and the suspend wakes
+  the device the moment it is parked and returns FALSE, so a hub suspending its ports does not park
+  itself above a device that is awake. Of the state, the transfer reads the mark before the flag:
+  the suspend sets the flag before it lowers the mark, so a suspend that ends between the two reads
+  still leaves the flag to be seen. Compiler barriers keep these orders: there is one CPU, and a
+  task switch comes only between instructions. The mark goes up after the remote-wake arming, whose
+  own transfers would otherwise count, and after the bindings, so a hub's suspend of its children,
+  which runs on the hub's EP0, does not trip it. A device found suspended is woken with the transfer
+  uncounted, then counted again: a hub's resume unparks its ports over the same EP0 pipe, and each
+  of those transfers pairs its own count. Interrupt transfers are not counted: a listener parked
+  across a suspend is meant to be, and a synchronous one started before the mark ends at its NAK
+  timeout, if its pipe has one. A stream start (`psdStartRTIso`) is a transfer here; the other
+  RT-ISO commands are not.
 - **Rollback** undoes a half suspend - bindings stopped and rings quiesced while the flag is clear -
   which nothing else would ever recover: auto-resume keys off the flag and the idle sweep has
   written the device off. It runs outside the device lock (rule 10).
