@@ -3,53 +3,47 @@
 A USB stack for **AmigaOS 3.1 and newer**. Plug in a keyboard, a mouse, a memory stick, a
 USB sound card or a network adapter and use it from Workbench - hot-plug, unplug, no reboot.
 
-Neptune is derived from **Poseidon** as maintained in the AROS tree. **Chris Hodges** wrote
+Neptune is derived from **Poseidon** as maintained in the AROS tree: **Chris Hodges** wrote
 Poseidon for AmigaOS (2002-2009) and placed it into AROS in 2009, where the **AROS
-Development Team** has maintained and extended it since. Neptune started from those sources
-and has gone its own way: a
-host-controller interface of its own design, rewritten SuperSpeed hub handling, UAS mass
-storage over bulk streams, USB link power management and a rebuilt mounting layer
-([`RELEASE-NOTES.md`](RELEASE-NOTES.md) has the details).
-
-**Neptune is not Poseidon.** It is an independent fork, not maintained by or affiliated with
-Chris Hodges or the AROS Development Team, and it is not compatible with Poseidon - see
-[Compatibility with Poseidon](#compatibility-with-poseidon). Releases 6.0 to 6.2 were
-published as "Poseidon for AmigaOS"; from 6.3 on the project is Neptune.
+Development Team** has maintained and extended it since. Neptune is an independent fork, not
+maintained by or affiliated with Chris Hodges or the AROS Development Team, and it is not
+compatible with Poseidon - see [Compatibility with Poseidon](#compatibility-with-poseidon).
+Releases 6.0 to 6.2 were published as "Poseidon for AmigaOS"; from 6.3 on the project is
+Neptune.
 
 ## What you get
 
 - **Plug and play** - devices appear and disappear as you connect them.
 - **30 USB class drivers** - input, storage, networking, serial, printing, audio, MIDI and
   video ([list](#class-drivers)).
-- **USB 3.0 SuperSpeed** - SuperSpeed hubs and devices handled as such; UAS mass storage
-  with several commands in flight.
+- **USB 3.0 SuperSpeed** - SuperSpeed hubs, and UAS mass storage with several commands in
+  flight.
 - **Power management** - idle devices and links drop into low-power states; a suspended
   keyboard or mouse wakes on use.
 - **Neptune USB** - a control panel for every connected device and class.
-- **Shell commands** and, on PiStorm/Emu68, an optional **USB-in-ROM** kit (USB keyboard
-  and mouse in the boot menu, booting from USB; see `ROM/ROM-ReadMe.md` in the archive).
+- On PiStorm/Emu68, an optional **USB-in-ROM** kit: USB keyboard and mouse in the boot menu,
+  booting from USB (see `ROM/ROM-ReadMe.md` in the archive).
 
-Not included: the *host-controller driver* for your USB hardware - see
+The *host-controller driver* for your USB hardware is not included - see
 [Talking to your USB hardware](#talking-to-your-usb-hardware).
 
 ## Requirements
 
-- **Kickstart and Workbench 3.1 or newer** - a few details differ below 3.2, see
-  [Known limitations](#known-limitations).
+- **Kickstart and Workbench 3.1 or newer**; a few details differ below 3.2 (see
+  [Known limitations](#known-limitations)).
 - A **68020 or better**; no FPU needed.
-- A **USB host-controller driver**. `xhci.device` (6.x) and `xhci-legacy.device` (5.x) from the
-  [Emu68 driver stack](https://github.com/rondoval/emu68-driver-stack) (PiStorm/Emu68 on a
-  Raspberry Pi 4 or CM4) are confirmed working.
-- **Installer 43.3 or newer** for the `Install` script (Aminet `util/misc/Installer-43_3.lha`;
-  OS 3.5 and later have one).
-- **MUI 3.8 or newer** and a **640×480 or larger screen**, for Neptune USB and the class
-  settings windows only; the stack itself needs neither.
+- A **USB host-controller driver**, such as `xhci.device` 6.x or `xhci-legacy.device` 5.x
+  from the [Emu68 driver stack](https://github.com/rondoval/emu68-driver-stack) (PiStorm/Emu68
+  on a Raspberry Pi 4 or CM4).
+- **Installer 43.3 or newer** (OS 3.5 and later have it; Aminet `util/misc/Installer-43_3.lha`).
+- **MUI 3.8 or newer** and a 640×480 screen, only for Neptune USB and the class settings
+  windows.
 
 ## Talking to your USB hardware
 
-A separate host-controller driver drives the USB hardware; you name it to the stack
-(`USBStart xhci.device 0`, or in Neptune USB), and the stack asks it which of two
-interfaces it speaks:
+A separate host-controller driver drives the USB hardware. You name it to the stack
+(`USBStart xhci.device 1`, or in Neptune USB), and the stack asks it which interface it
+speaks:
 
 | | **Legacy interface** | **Context interface** |
 |---|---|---|
@@ -60,29 +54,26 @@ interfaces it speaks:
 | Link power management | up to the driver | the stack's policy, switchable in Neptune USB |
 
 The legacy interface is the classic V1/V2 `IOUsbHWReq` contract, unchanged, so existing
-drivers written to it keep working. The context interface is Neptune's own and carries the
-USB 3.0 work; take `xhci.device` 6.x if your hardware has one.
+drivers keep working. The context interface is Neptune's own and carries the USB 3.0 work:
+use `xhci.device` 6.x where you can.
 
 ## Compatibility with Poseidon
 
 Neptune is an incompatible fork:
 
 - **Classes and tools.** Poseidon's classes and tools (the 4.x and AROS 5.x lines) do not
-  run on Neptune, and Neptune's do not run on Poseidon. Neptune's library is
-  `neptune.library`, and its class protocol has diverged from Poseidon's.
+  run on Neptune, and Neptune's do not run on Poseidon: its library is `neptune.library`,
+  and its class protocol has diverged from Poseidon's.
 - **Host-controller drivers.** Neptune speaks the classic V1/V2 `IOUsbHWReq` interface and
   its own context interface. It does **not** implement Poseidon's **V3** host-controller
   interface, which the AROS Development Team designed with Chris Hodges, so a driver that
-  depends on V3 does not work with Neptune.
-- **The context interface is not Poseidon's.** It is Neptune's own design and is not part
-  of Poseidon's API; a driver written to it works with Neptune only.
-- **Settings.** Neptune keeps its settings in `ENVARC:Sys/neptune.prefs`. On first start,
-  if that file does not exist, it imports `poseidon.prefs` once; `poseidon.prefs` itself is
-  never changed.
-- **Names.** Neptune's commands and tools all start with `USB` (`USBStart`,
-  `USBAddHardware`, `USBRadio`, ...) and its class drivers end in `.usbclass`
-  (`hid.usbclass`, ...), so installing Neptune replaces no Poseidon 4.x command, tool or
-  class.
+  depends on V3 does not work with Neptune. The context interface is not part of Poseidon's
+  API; a driver written to it works with Neptune only.
+- **Settings** live in `ENVARC:Sys/neptune.prefs`. If that file does not exist, Neptune
+  imports `poseidon.prefs` once on first start; `poseidon.prefs` itself is never changed.
+- **Names.** Commands and tools start with `USB` (`USBStart`, `USBRadio`, ...) and class
+  drivers end in `.usbclass`, so installing Neptune replaces no Poseidon 4.x command, tool
+  or class.
 - **One stack at a time.** Neptune does not start its USB controllers while Poseidon is
   loaded, and says why in its log; reboot without Poseidon, or quit it and run `Avail FLUSH`.
 
@@ -99,26 +90,26 @@ page:
 | `Neptune-<ver>-<cpu>-serial.lha` | the same, plus diagnostics on the serial port |
 
 Unpack it, run `Install` (double-click, or `Installer Install` from a Shell), answer the
-questions and reboot. The installer puts `neptune.library` in `LIBS:`, the classes in
-`DEVS:USBClasses/`, the commands in `C:` and Neptune USB in `SYS:Prefs/`; USBEject, the
-optional tools and the settings-file icon are separate questions. It never replaces a newer
-file without asking - to switch CPU variant, which has the same version number, run it at
-the *Average* or *Expert* level.
+questions and reboot. It installs `neptune.library` in `LIBS:`, the classes in
+`DEVS:USBClasses/`, the commands in `C:` and Neptune USB in `SYS:Prefs/`, plus the optional
+parts you tick: USBEject, the VHI driver, the settings-file icon and the gadget tools. It
+never replaces a newer file without asking; to switch CPU variant, which has the same version
+number, run it at the *Expert* level.
 
-It can also add the one startup command to `S:User-Startup`:
+To start the stack at boot it adds one line to `S:User-Startup`, for the USB-C (OTG) port
+(unit 0), the four USB-A ports of a Pi 4B (unit 1), or a device and unit you name:
 
 ```
-C:USBStart >NIL: xhci.device 0     ; your host-controller device and unit
+C:USBStart >NIL: xhci.device 1
 ```
 
-`USBStart` applies your saved settings; where they say nothing it loads every class and
+`USBStart` applies your saved settings; where they say nothing, it loads every class and
 attaches the named controller.
 
-**Upgrading from 6.0-6.2 ("Poseidon for AmigaOS").** The installer disables the old
-`Poseidon USB Stack` startup block and offers to remove the old files (`poseidon.library`,
-`SYS:Classes/USB/`, `C:Psd*`, `SYS:Prefs/Trident` and friends) - only files that report
-version 6 or newer, so a classic Poseidon is never touched. Neptune imports your settings on
-first start and moves any sounds you added to `SYS:Prefs/Presets/Neptune/`.
+**Upgrading from 6.0-6.2 ("Poseidon for AmigaOS").** The installer disables the old startup
+block and offers to remove the old files - only those that report version 6 or newer, so a
+classic Poseidon is never touched. Your settings are imported on first start, and sounds you
+added are carried over.
 
 ## Settings worth knowing about
 
@@ -127,14 +118,16 @@ In **Neptune USB** (`SYS:Prefs/NeptuneUSB`):
 - *Various Settings → Stack Settings*: **power-saving suspend** puts idle devices to sleep;
   **USB link power management** lets idle links drop into U1/U2 or L1 (context interface
   only; also per device). Turn either off if a device misbehaves when idle.
-- **massstorage** (select the class, *Configure*): the handler per filesystem (FAT, NTFS,
-  exFAT, CD/DVD) with its DOS name and buffers, what to automount, unmount on removal, UAS vs
-  BOT and the UAS queue depth. exFAT needs `L:exFATFileSystem` and `LIBS:filesysbox.library`,
+- **massstorage** (select the class, *Configure*): the handler, DOS name and buffers per
+  filesystem (FAT, NTFS, exFAT, CD/DVD), what to automount, unmount on removal, UAS or BOT
+  and the UAS queue depth. exFAT needs `L:exFATFileSystem` and `LIBS:filesysbox.library`,
   which are not in this archive.
 - **The device list**: suspend, resume, power-cycle or safely eject a device by hand;
   power-cycling often revives a device that has stopped responding.
 
 ## Class drivers
+
+Each is `DEVS:USBClasses/<name>.usbclass`.
 
 | Category | Classes |
 |---|---|
@@ -143,9 +136,9 @@ In **Neptune USB** (`SYS:Prefs/NeptuneUSB`):
 | **Mass storage & imaging** | `massstorage` (BOT / CBI / UAS), `ptp` (cameras), `dfu` (firmware upgrade), `rawwrap` |
 | **Serial & modem** | `cdcacm`, `serialpl2303` (PL2303), `serialcp210x` (CP210x) |
 | **Printer** | `printer` (provides `usbparallel.device`) |
-| **Networking (SANA-II)** | `cdceth`, `asixeth` (ASIX), `pegasuseth` (Pegasus), `davicometh` (DM9601), `moschipeth` (MosChip), `ethwrap`, `rndis`, `lan78xx` (Microchip LAN78xx) |
-| **MIDI & audio** | `simplemidi`, `camdmidi` (CAMD), `audio` (USB audio → `ahi.device`) |
-| **Video** | `video` (UVC webcams: Motion-JPEG, uncompressed, H.264; provides `usbvideo.device`) |
+| **Networking (SANA-II)** | `cdceth`, `asixeth` (ASIX), `pegasus` (Pegasus), `dm9601eth` (Davicom DM9601), `moschipeth` (MosChip), `ethwrap`, `rndis`, `lan78xx` (Microchip LAN78xx) |
+| **MIDI & audio** | `simplemidi`, `camdusbmidi` (CAMD), `usbaudio` (USB audio → `ahi.device`) |
+| **Video** | `usbvideo` (UVC webcams: Motion-JPEG, uncompressed, H.264; provides `usbvideo.device`) |
 | **Other** | `bluetooth`, `stir4200` (IrDA), `palmpda`, `arosx` (Xbox gamepad) |
 
 ## Tools
@@ -155,23 +148,20 @@ In **Neptune USB** (`SYS:Prefs/NeptuneUSB`):
 - **USBList** - lists connected USB devices.
 - **USBErrorlog** - prints the stack's error log.
 - **USBEject** (optional, `SYS:WBStartup/`) - a Workbench **USB** menu with an *Eject* item
-  per drive. It flushes and unmounts every volume (refusing while files are open), then
-  stops the drive and confirms it is safe to unplug. Under a Workbench replacement the items
-  appear in the **Tools** menu instead.
-- Optional per-gadget tools in `SYS:Tools/`: `USBRadio`, `USBPencam`, `USBSonixcam`,
+  per drive: it flushes and unmounts the drive's volumes (refusing while files are open), then
+  stops the drive and says when it is safe to unplug.
+- **Gadget tools** (optional, `SYS:Tools/`): `USBRadio`, `USBPencam`, `USBSonixcam`,
   `USBRocket`, `USBPowMan`, `USBUPS`, `USBVideo`.
-- `usbvideo.vhi` in `LIBS:VHI/` lets VHI programs such as cAMIra use USB webcams; camera
-  controls are in the camera's settings window in Neptune USB.
+- **`usbvideo.vhi`** (optional, `LIBS:VHI/`) lets VHI programs such as cAMIra use USB webcams.
 
 ## Known limitations
 
-- **BOT read throughput** is below what the drive can do (unaligned buffers copied on the
-  driver side); a fix is in progress. UAS drives are not affected.
 - **Not tested with classic Amiga USB cards.** The legacy interface works (`xhci-legacy.device`
   5.x runs on it), but no Deneb, Subway or similar card has been tried.
 - **Below OS 3.2, held keys do not auto-repeat** - `input.device` gained the command that
   drives repeat (`IND_ADDEVENT`) in V47.
-- **Below `workbench.library` 45**, USBEject's items sit flat in the Tools menu.
+- **Below `workbench.library` 45, or under a Workbench replacement**, USBEject's items sit in
+  the Tools menu.
 - **On `lowlevel.library` older than 40.27**, gamepads have no analogue stick or rumble.
 - **HID sound and key-string actions** need `datatypes.library` and `commodities.library`;
   without them those actions are skipped.
@@ -179,22 +169,18 @@ In **Neptune USB** (`SYS:Prefs/NeptuneUSB`):
 ## Version numbers
 
 `neptune.library` **6.x** continues the numbering of the releases published as "Poseidon for
-AmigaOS" and is unrelated to Poseidon's own 4.x (Chris Hodges) and 5.x (AROS) lines. Every
-component carries the same version - **6.3** here - and the classes and tools require
+AmigaOS", unrelated to Poseidon's own 4.x (Chris Hodges) and 5.x (AROS) lines. Every
+component carries the same version - **6.3** here; the classes and tools need
 `neptune.library` 6 or newer.
 
 ## Licence and credits
 
 Neptune is distributed under the **AROS Public License (APL) Version 1.1** - see
 [LICENSE](LICENSE). It is derived from the Poseidon sources in the AROS tree, maintained by the
-**AROS Development Team**. Poseidon's original author and Initial Developer is **Chris
-Hodges**, who placed his sources into AROS under the APL in 2009. Some components carry their
-own licences, and MUI is a runtime dependency not included here - see [LEGAL](LEGAL).
-
-- **Chris Hodges** - original author of Poseidon (2002-2009).
-- **The AROS Development Team** - maintainers of Poseidon in the AROS tree since 2009, whose
-  sources Neptune is derived from.
-- The third-party authors named in [LEGAL](LEGAL).
+**AROS Development Team** since 2009. Poseidon's original author and Initial Developer is
+**Chris Hodges** (2002-2009), who placed his sources into AROS under the APL in 2009. Some
+components carry their own licences, and MUI is a runtime dependency not included here; those
+and the other third-party authors are named in [LEGAL](LEGAL).
 
 ---
 

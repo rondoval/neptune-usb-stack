@@ -35,22 +35,17 @@
 ;   is a ">= 43" test and not an equality one.
 ;==========================================================================
 (if (< @installer-version 2818048)
-    (abort (#product " needs Installer 43.3 or newer; this one is older.\n\n"
-            "Installer 43.3 is freely distributable and is on Aminet as "
-            "util/misc/Installer-43_3.lha. Copy it over C:Installer (or run it from "
-            "wherever you unpack it) and start this script again.\n\n"
-            "Nothing has been installed."))
+    (abort #product " needs Installer 43.3 or newer; this one is older.\n\n"
+           "Installer 43.3 is freely distributable and is on Aminet as "
+           "util/misc/Installer-43_3.lha. Copy it over C:Installer (or run it from "
+           "wherever you unpack it) and start this script again.\n\n"
+           "Nothing has been installed.")
 )
 
-(welcome ("Welcome to the installation of " #product ", the USB stack for AmigaOS 3.1 and newer.\n\n"
-          "Neptune is an incompatible fork of the Poseidon USB stack: Poseidon's classes, "
-          "tools and V3 host-controller drivers do not work with it, and Neptune's "
-          "classes and tools do not work with Poseidon.\n\n"
-          "This installs neptune.library, the USB device classes, the Neptune USB "
-          "control panel and the command-line tools.\n\n"
-          "Note: it does NOT install a USB host-controller driver - that ships "
-          "separately (e.g. xhci.device from the Emu68 driver stack). You will be "
-          "asked for its name if you choose to auto-start the stack."))
+(welcome #product " is a USB stack for AmigaOS 3.1 and newer, forked from Poseidon; "
+         "Poseidon's classes and tools do not work with it.\n\n"
+         "The USB host-controller driver, such as xhci.device from the Emu68 driver "
+         "stack, is installed separately.")
 
 ;==========================================================================
 ; neptune.library -> LIBS:
@@ -73,7 +68,7 @@
 (makedir "DEVS:USBClasses" (prompt "Creating DEVS:USBClasses") (help @makedir-help))
 (foreach "DEVS/USBClasses" "#?.usbclass"
     (copylib
-        (prompt ("Installing " @each-name " into DEVS:USBClasses/"))
+        (prompt "Installing " @each-name " into DEVS:USBClasses/")
         (help @copylib-help)
         (source (tackon "DEVS/USBClasses" @each-name))
         (dest "DEVS:USBClasses")
@@ -87,13 +82,13 @@
 (complete 40)
 (foreach "C" "#?"
     (copylib
-        (prompt ("Installing " @each-name " into C:"))
-        (help ("These commands bring the stack up and inspect it:\n\n"
-               "  USBStart        - start the stack (the one startup command)\n"
-               "  USBAddHardware  - attach a host-controller device by hand\n"
-               "  USBAddClasses   - load the classes from DEVS:USBClasses/ by hand\n"
-               "  USBList         - list the connected USB devices\n"
-               "  USBErrorlog     - show the stack error log\n\n" @copylib-help))
+        (prompt "Installing " @each-name " into C:")
+        (help "These commands bring the stack up and inspect it:\n\n"
+              "  USBStart        - start the stack (the one startup command)\n"
+              "  USBAddHardware  - attach a host-controller device by hand\n"
+              "  USBAddClasses   - load the classes from DEVS:USBClasses/ by hand\n"
+              "  USBList         - list the connected USB devices\n"
+              "  USBErrorlog     - show the stack error log\n\n" @copylib-help)
         (source (tackon "C" @each-name))
         (dest "C:")
         (confirm "expert")
@@ -125,15 +120,15 @@
 )
 (copylib
     (prompt "Installing Neptune USB (the control panel) into SYS:Prefs/")
-    (help ("Neptune USB is the control panel for the USB stack.\n\n" @copylib-help))
+    (help "Neptune USB is the control panel for the USB stack.\n\n" @copylib-help)
     (source "Prefs/NeptuneUSB")
     (dest "SYS:Prefs")
     (confirm "expert")
 )
 (copyfiles
     (prompt "Installing Neptune USB's icon and the USB attach/detach sounds into SYS:Prefs/")
-    (help ("Connect.iff / Disconnect.iff are the default sounds played when a USB device is "
-           "plugged in or removed (SYS:Prefs/Presets/Neptune/).\n\n" @copyfiles-help))
+    (help "Connect.iff / Disconnect.iff are the default sounds played when a USB device is "
+          "plugged in or removed (SYS:Prefs/Presets/Neptune/).\n\n" @copyfiles-help)
     (source "Prefs")
     (dest "SYS:Prefs")
     (pattern "~(NeptuneUSB)")
@@ -146,9 +141,9 @@
 (if (exists "LOCALE:" (noreq))
     (copyfiles
         (prompt "Installing the Neptune USB catalogs (translations) into LOCALE:Catalogs/")
-        (help ("Neptune USB speaks English by default. The catalogs add other "
-               "languages; they are only used if your Locale language matches.\n\n"
-               @copyfiles-help))
+        (help "Neptune USB speaks English by default. The catalogs add other "
+              "languages; they are only used if your Locale language matches.\n\n"
+              @copyfiles-help)
         (source "Catalogs")
         (dest "LOCALE:Catalogs")
         (all)
@@ -157,21 +152,74 @@
 )
 
 ;==========================================================================
-; Settings-file datatype + default icon (DefIcons)
-;   DEVS/DataTypes/Neptune  -> DEVS:DataTypes/Neptune     (datatypes identifies FORM..PSDC files)
-;   Icons/def_Neptune.info  -> ENVARC:SYS/ + ENV:SYS/     (the icon Workbench paints on them)
+; Optional parts, chosen together on one screen. Bits of #extras:
+;   0  USBEject (safe-eject Workbench menu)       -> SYS:WBStartup/
+;   1  the VHI driver for UVC devices             -> LIBS:VHI/
+;   2  settings-file datatype + default icon      -> DEVS:DataTypes/, ENV(ARC):SYS/
+;   3  the per-gadget Tools                       -> SYS:Tools/
 ;==========================================================================
 (complete 70)
-(if (askbool
-        (prompt ("Install the Neptune settings-file icon?\n\n"
-                 "This adds a 'Neptune' datatype and a default Workbench icon, so your saved "
-                 "USB settings files show an icon instead of none. It relies on "
-                 "the DefIcons component, which is standard from AmigaOS 3.5 onwards; on 3.1 "
-                 "it is a separate install, and without it this is simply inert."))
-        (help ("Installs DEVS:DataTypes/Neptune (so datatypes.library recognises Neptune's "
-               "FORM...PSDC settings files) and ENVARC:SYS/def_Neptune.info (the default icon "
-               "DefIcons shows for them). Purely cosmetic; safe to decline."))
-        (default 1))
+(set #extras
+    (askoptions
+        (prompt "Which optional parts should be installed?")
+        (help "USBEject adds a 'USB' menu to the Workbench menu bar with an 'Eject' item "
+              "per USB drive, like Windows' 'Safely Remove Hardware'. It flushes and "
+              "unmounts all volumes (refusing while files are open) before the drive is "
+              "unplugged. It goes into SYS:WBStartup so it starts with Workbench; the same "
+              "eject is also available from Neptune USB's Devices page.\n\n"
+              "usbvideo.vhi lets VHI programs such as cAMIra and VHI Studio use webcams, "
+              "video grabbers and other USB Video Class devices. It goes into LIBS:VHI/ and "
+              "needs no setup; without a VHI program it is simply unused.\n\n"
+              "The settings-file icon adds a 'Neptune' datatype and a default Workbench icon, "
+              "so your saved USB settings files show an icon instead of none. It relies on "
+              "the DefIcons component, which is standard from AmigaOS 3.5 onwards; on 3.1 it "
+              "is a separate install, and without it this is simply inert.\n\n"
+              "The gadget tools are small command-line utilities for specific USB devices: "
+              "USBRadio, USBPencam, USBPowMan, USBRocket, USBSonixcam, USBUPS and USBVideo "
+              "(for UVC devices). They go into SYS:Tools/; install them only if you own the "
+              "matching hardware.\n\n"
+              "None of these is needed for the stack itself.")
+        (choices "USBEject: safe-eject menu on Workbench"
+                 "usbvideo.vhi: USB webcams in VHI programs"
+                 "Settings-file icon (needs DefIcons)"
+                 "Tools for specific USB gadgets")
+        (default 7)))
+
+(if (in #extras 0)
+    (
+        (makedir "SYS:WBStartup" (prompt "Creating SYS:WBStartup") (help @makedir-help))
+        (copylib
+            (prompt "Installing USBEject into SYS:WBStartup/")
+            (help @copylib-help)
+            (source "WBStartup/USBEject")
+            (dest "SYS:WBStartup")
+            (confirm "expert"))
+        (copyfiles
+            (prompt "Installing the USBEject icon into SYS:WBStartup/")
+            (help @copyfiles-help)
+            (source "WBStartup")
+            (dest "SYS:WBStartup")
+            (pattern "USBEject.info"))
+    )
+)
+
+(complete 73)
+(if (in #extras 1)
+    (
+        (makedir "LIBS:VHI" (prompt "Creating LIBS:VHI") (help @makedir-help))
+        (copylib
+            (prompt "Installing usbvideo.vhi into LIBS:VHI/")
+            (help @copylib-help)
+            (source "LIBS/VHI/usbvideo.vhi")
+            (dest "LIBS:VHI")
+            (confirm "expert"))
+    )
+)
+
+; DEVS/DataTypes/Neptune  -> DEVS:DataTypes/Neptune  (datatypes identifies FORM..PSDC files)
+; Icons/def_Neptune.info  -> ENVARC:SYS/ + ENV:SYS/  (the icon Workbench paints on them)
+(complete 75)
+(if (in #extras 2)
     (
         (makedir "DEVS:DataTypes" (prompt "Creating DEVS:DataTypes") (help @makedir-help))
         (copyfiles
@@ -195,84 +243,17 @@
     )
 )
 
-;==========================================================================
-; Optional: USBEject (safe-eject Workbench menu) -> SYS:WBStartup/
-;==========================================================================
-(complete 73)
-(if (askbool
-        (prompt ("Install the safe-eject Workbench menu (USBEject)?\n\n"
-                 "Adds a 'USB' menu to the Workbench menu bar with an "
-                 "'Eject' item per USB drive - like Windows' 'Safely Remove "
-                 "Hardware'. It flushes and unmounts all volumes (refusing "
-                 "while files are open) before the drive is unplugged."))
-        (help ("Installs USBEject into SYS:WBStartup so it starts with "
-               "Workbench. It waits in the background and keeps the 'USB' "
-               "menu in sync as drives come and go. Safe to decline; the "
-               "same eject is also available from Neptune USB's Devices page."))
-        (default 1))
-    (
-        (makedir "SYS:WBStartup" (prompt "Creating SYS:WBStartup") (help @makedir-help))
-        (copylib
-            (prompt "Installing USBEject into SYS:WBStartup/")
-            (help @copylib-help)
-            (source "WBStartup/USBEject")
-            (dest "SYS:WBStartup")
-            (confirm "expert"))
-        (copyfiles
-            (prompt "Installing the USBEject icon into SYS:WBStartup/")
-            (help @copyfiles-help)
-            (source "WBStartup")
-            (dest "SYS:WBStartup")
-            (pattern "USBEject.info"))
-    )
-)
-
-;==========================================================================
-; Optional: the per-gadget Tools -> SYS:Tools/
-;==========================================================================
-(complete 75)
-(if (askbool
-        (prompt ("Install the optional per-gadget tools?\n\n"
-                 "USBRadio, USBPencam, USBPowMan, USBRocket, USBSonixcam, "
-                 "USBUPS, USBVideo - small utilities for specific USB gadgets. "
-                 "USBVideo is the one for UVC devices (USB video). Install them "
-                 "only if you own the matching hardware."))
-        (help "These are niche command-line utilities for specific USB devices. "
-              "They are not needed for the stack itself.")
-        (default 0))
+(complete 80)
+(if (in #extras 3)
     (
         (makedir "SYS:Tools" (prompt "Creating SYS:Tools") (help @makedir-help))
         (foreach "Tools" "#?"
             (copylib
-                (prompt ("Installing " @each-name " into SYS:Tools/"))
+                (prompt "Installing " @each-name " into SYS:Tools/")
                 (help @copylib-help)
                 (source (tackon "Tools" @each-name))
                 (dest "SYS:Tools")
                 (confirm "expert")))
-    )
-)
-
-;==========================================================================
-; Optional: the VHI driver for UVC devices -> LIBS:VHI/
-;==========================================================================
-(complete 80)
-(if (askbool
-        (prompt ("Install the VHI driver for UVC devices?\n\n"
-                 "UVC is the USB Video Class: webcams, video grabbers and "
-                 "other USB video sources. VHI is the interface video programs "
-                 "such as cAMIra and VHI Studio use."))
-        (help ("Installs usbvideo.vhi into LIBS:VHI/, where VHI programs look "
-               "for their drivers. It does nothing by itself and needs no "
-               "setup; without a VHI program it is simply unused."))
-        (default 1))
-    (
-        (makedir "LIBS:VHI" (prompt "Creating LIBS:VHI") (help @makedir-help))
-        (copylib
-            (prompt "Installing usbvideo.vhi into LIBS:VHI/")
-            (help @copylib-help)
-            (source "LIBS/VHI/usbvideo.vhi")
-            (dest "LIBS:VHI")
-            (confirm "expert"))
     )
 )
 
@@ -288,8 +269,8 @@
 (complete 82)
 (if (= 0 (run (cat "C:Search >NIL: S:User-Startup \";BEGIN " #oldstartupname "\"") (safe)))
     (startup #oldstartupname
-        (prompt ("Disable the Poseidon for AmigaOS 6.x start command in S:User-Startup?\n\n"
-                 "Neptune replaces it. Left in place, it starts the old stack as well."))
+        (prompt "Disable the Poseidon for AmigaOS 6.x start command in S:User-Startup?\n\n"
+                "Neptune replaces it. Left in place, it starts the old stack as well.")
         (help @startup-help)
         (command "; Disabled by the Neptune installer.\n"))
 )
@@ -313,19 +294,19 @@
 
 (if #oldrelease
     (if (askbool
-            (prompt ("Remove the files of Poseidon for AmigaOS 6.x?\n\n"
-                     "Neptune replaces releases 6.0 to 6.2, which were published as "
-                     "'Poseidon for AmigaOS'. Their files are no longer used:\n\n"
-                     "  LIBS:poseidon.library\n"
-                     "  the classes in SYS:Classes/USB/\n"
-                     "  C:PsdStackLoader, PsdDevLister, PsdErrorlog\n"
-                     "  SYS:Prefs/Trident and its catalogs\n"
-                     "  the PSD datatype, its icon and the old sounds\n\n"
-                     "Your settings in ENVARC:Sys/poseidon.prefs are kept."))
-            (help ("Only files of the 6.x releases are removed: anything that reports a "
-                   "version below 6, such as a classic Poseidon, is left alone. Neptune "
-                   "does not use any of these files, and it imports poseidon.prefs on "
-                   "first start."))
+            (prompt "Remove the files of Poseidon for AmigaOS 6.x?\n\n"
+                    "Neptune replaces releases 6.0 to 6.2, which were published as "
+                    "'Poseidon for AmigaOS'. Their files are no longer used:\n\n"
+                    "  LIBS:poseidon.library\n"
+                    "  the classes in SYS:Classes/USB/\n"
+                    "  C:PsdStackLoader, PsdDevLister, PsdErrorlog\n"
+                    "  SYS:Prefs/Trident and its catalogs\n"
+                    "  the PSD datatype, its icon and the old sounds\n\n"
+                    "Your settings in ENVARC:Sys/poseidon.prefs are kept.")
+            (help "Only files of the 6.x releases are removed: anything that reports a "
+                  "version below 6, such as a classic Poseidon, is left alone. Neptune "
+                  "does not use any of these files, and it imports poseidon.prefs on "
+                  "first start.")
             (default 1))
         (
             (P_delv6 "LIBS:poseidon.library")
@@ -378,31 +359,55 @@
 (set #startmode
     (askchoice
         (prompt "How should the USB stack be started at boot?")
-        (help ("'S:User-Startup' runs the start command early on every boot "
-               "(recommended).\n\n"
-               "'Manual' installs nothing extra - you start the stack yourself by "
-               "running USBStart <device> <unit> (e.g. from a shell or your own "
-               "script)."))
+        (help "'S:User-Startup' runs the start command early on every boot "
+              "(recommended).\n\n"
+              "'Manual' installs nothing extra - you start the stack yourself by "
+              "running USBStart <device> <unit> (e.g. from a shell or your own "
+              "script).")
         (choices "Add to S:User-Startup (recommended)"
                  "Manual - don't auto-start")
         (default 0)))
 
 (if (= #startmode 0)
     (
-        (set #hcd
-            (askstring
-                (prompt "Name of your USB host-controller device:")
-                (help ("This is the device the USB host controller is driven by. "
-                       "For PiStorm/Emu68 it is normally 'xhci.device' (installed "
-                       "separately with the Emu68 driver stack)."))
-                (default "xhci.device")))
-        (set #unit
-            (asknumber
-                (prompt ("Unit number of " #hcd ":"))
-                (help ("Which unit of the host-controller device to attach. With a single USB "
-                       "controller this is 0 (the default). Increase it only if you have several "
-                       "controllers and want a specific one."))
-                (default 0)))
+        (set #port
+            (askchoice
+                (prompt "Which USB ports should the stack start?")
+                (help "On a PiStorm with a Raspberry Pi 4B or CM4, xhci.device (installed "
+                      "separately with the Emu68 driver stack) drives two sets of ports:\n\n"
+                      "Unit 0 is the onboard OTG port: the USB-C port of a Pi 4B, the USB "
+                      "port of a CM4. It needs otg_mode=1 in the Pi's config.txt.\n\n"
+                      "Unit 1 is the controller behind the four USB-A ports of a Pi 4B (on "
+                      "a CM4, a PCIe USB card). It needs bcmpcie.library.\n\n"
+                      "'Other' asks for the name and unit of any other host-controller "
+                      "device.\n\n"
+                      "This only starts the stack on a machine without saved settings: once "
+                      "you have chosen a controller in Neptune USB and saved, that one is used.")
+                (choices "xhci.device unit 0: USB-C (OTG) port"
+                         "xhci.device unit 1: USB-A ports (Pi 4B)"
+                         "Other device or unit")
+                (default 1)))
+        (if (= #port 2)
+            (
+                (set #hcd
+                    (askstring
+                        (prompt "Name of your USB host-controller device:")
+                        (help "This is the device the USB host controller is driven by.")
+                        (default "xhci.device")))
+                (set #unit
+                    (asknumber
+                        (prompt "Unit number of " #hcd ":")
+                        (help "Which unit of the host-controller device to attach. With a "
+                              "single USB controller this is 0 (the default). Increase it "
+                              "only if you have several controllers and want a specific one.")
+                        (default 0)))
+            )
+            ; The first two choices are xhci.device units 0 and 1.
+            (
+                (set #hcd "xhci.device")
+                (set #unit #port)
+            )
+        )
         (startup #startupname
             (prompt "Add the Neptune startup command to S:User-Startup?")
             (help @startup-help)
@@ -416,9 +421,9 @@
 )
 
 (complete 100)
-(message (#product " has been installed.\n\n"
-          (if (= #startmode 0)
-              "Reboot to start the USB stack, then open Neptune USB from SYS:Prefs/ to see your devices."
-              "Start the stack with USBStart <device> <unit>, then open Neptune USB from SYS:Prefs/."))
+(message #product " has been installed.\n\n"
+         (if (= #startmode 0)
+             "Reboot to start the USB stack, then open Neptune USB from SYS:Prefs/ to see your devices."
+             "Start the stack with USBStart <device> <unit>, then open Neptune USB from SYS:Prefs/.")
          (all))
 (exit (quiet))
