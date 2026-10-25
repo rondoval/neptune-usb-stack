@@ -1,7 +1,7 @@
 # usbvideo.usbclass - Architecture
 
 > **Scope:** `usbvideo.usbclass`, the USB Video Class driver (UVC 1.0, 1.1 and 1.5), the Exec device
-> it carries, `usbvideo.device`, and its clients: the VHI driver `usbvideo.vhi` and the tools
+> it carries, `usbvideo.device`, and its clients: the VHI driver `neptune.vhi` and the tools
 > `USBVideo`/`USBVideoTest`. It is a client of `neptune.library`; read
 > [neptune.library-architecture.md](neptune.library-architecture.md) first (class binding §5.5,
 > pipes §5.6, RT-ISO §5.7, power policy §5.10). It follows
@@ -49,7 +49,7 @@ interfaces are used through that binding and never claimed.
 ```mermaid
 flowchart TB
     VAPP["VHI programs, e.g. cAMIra"]
-    VHI["usbvideo.vhi - VHI driver, no USB code"]
+    VHI["neptune.vhi - VHI driver, no USB code"]
     TOOLS["USBVideo, USBVideoTest"]
     NUSB["Neptune USB - settings button"]
     subgraph CLS["usbvideo.usbclass"]
@@ -102,7 +102,7 @@ flowchart TB
 | **Transports** | Isochronous: RT-ISO hooks. Bulk: one pipe, one transfer in flight, payloads cut out of transfers | `uvc_iso.c`: `uvcInDoneHook`, `uvcIsoStart`; `uvc_bulk.c`: `uvcBulkTransfer`, `uvcBulkAsk`, `uvcBulkDone` |
 | **Device layer** | Open/close/`BeginIO`/`AbortIO`; read-only commands in the caller's context; forwarding | `dev.c`: `devOpen`, `devClose`, `devBeginIO`, `devAbortIO`, `nModeTable`, `nTopology` |
 | **Settings and persistence** | MUI window task (Picture, Camera, Mode pages); the two stored chunks and putting them in force | `usbvideo.gui.c`: `nGUITask`, `nGuiRequest`, `nGuiStore`; `UvcCfgChunk`, `nApplyConfig`, `nApplyStoredControls` |
-| **Clients** | VHI driver; the tools and what they share | `vhi/usbvideo.vhi.c`, `vhi/mjpegdht.h`, `tools/uvc_client.c` |
+| **Clients** | VHI driver; the tools and what they share | `vhi/neptune.vhi.c`, `vhi/mjpegdht.h`, `tools/uvc_client.c` |
 
 A unit (`NepVideoStream`) groups its changing state into sub-structures whose names say who may
 touch them: mode in force with the negotiated block (`ns_Mode`), the user's default mode
@@ -426,7 +426,7 @@ not keep it awake.
 **VHI** is AmigaOS's existing capture interface (VHI Studio, cAMIra): a library in `LIBS:VHI/`
 with one entry, `vhi_api()`, centred on "digitize one picture into memory the application frees".
 It has no mode list, rate, stream or control channel, so it cannot be the class's interface, but
-it maps onto the device. `usbvideo.vhi` has no USB code and is laid out like a class module.
+it maps onto the device. `neptune.vhi` has no USB code and is laid out like a class module.
 Details: [uvc/notes/vhi-notes.md](uvc/notes/vhi-notes.md).
 
 - **Mapping**: OPEN makes a handle (reply port, three requests, timer, the first unit that
@@ -603,4 +603,4 @@ reopens the structure:
 | A format change started by the camera (stage 11) | engine reports ERR; the subtask reads the stream error code and PROBE GET_CUR, then raises an event |
 | Several streams or layers in one (simulcast, SVC) | the payload header's layer field in `ivr_Flags`; the layout fields of the 1.5 block |
 | Encoding Unit | already modelled and reachable raw; "not before commit" is the camera's to enforce |
-| Decoding in the VHI driver | `vhi/usbvideo.vhi.c` only, if a client needs pixels from an MJPEG-only camera |
+| Decoding in the VHI driver | `vhi/neptune.vhi.c` only, if a client needs pixels from an MJPEG-only camera |

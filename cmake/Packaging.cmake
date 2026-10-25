@@ -7,7 +7,7 @@
 #       Neptune-<ver>-<cpu>[-<backend>]/
 #         Install  Install.info            the Installer script (dist/)
 #         LIBS/neptune.library
-#         LIBS/VHI/usbvideo.vhi            VHI driver for USB cameras -> LIBS:VHI/ (opt-in)
+#         LIBS/VHI/neptune.vhi            VHI driver for USB cameras -> LIBS:VHI/ (opt-in)
 #         DEVS/USBClasses/*.usbclass
 #         C/USBStart USBAddHardware USBAddClasses USBList USBErrorlog
 #         Prefs/NeptuneUSB  Prefs/NeptuneUSB.info
@@ -104,7 +104,7 @@ install(TARGETS USBRadio USBPencam USBPowMan USBRocket USBSonixcam USBUPS USBVid
 
 # The VHI driver for USB video cameras - opt-in at install time; VHI applications look for
 # drivers in LIBS:VHI/, and the drawer mirrors that.
-install(TARGETS usbvideo_vhi RUNTIME DESTINATION LIBS/VHI)
+install(TARGETS neptune_vhi RUNTIME DESTINATION LIBS/VHI)
 
 # USBEject safe-eject daemon -> SYS:WBStartup (the Installer asks; icon carries DONOTWAIT).
 install(TARGETS USBEject RUNTIME DESTINATION WBStartup)

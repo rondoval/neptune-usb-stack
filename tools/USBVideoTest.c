@@ -35,7 +35,7 @@
  *   USBVideoTest EVENTS=20         while streaming: write each asynchronous
  *                                  control and expect its status event, toggle
  *                                  each auto mode and back, then listen 20 s
- *   USBVideoTest VHI               drive LIBS:VHI/usbvideo.vhi as a VHI client:
+ *   USBVideoTest VHI               drive LIBS:VHI/neptune.vhi as a VHI client:
  *                                  check the offered sizes against the mode
  *                                  table, then grab FRAMES pictures (default
  *                                  30) at the size nearest WIDTH x HEIGHT
@@ -554,7 +554,7 @@ static BOOL startStopCycles(struct UvcCamera *cm, struct UsbVideoModeReq *uvq, U
  * ***********************************************************************
  */
 
-#define VHI_DRIVER "LIBS:VHI/usbvideo.vhi"
+#define VHI_DRIVER "LIBS:VHI/neptune.vhi"
 
 /* The VHI driver's single entry point (LVO -30) */
 #define vhi_api(method, submethod, attr, errcode, handle) \

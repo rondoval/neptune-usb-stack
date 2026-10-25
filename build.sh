@@ -152,7 +152,7 @@ CORE=(
     "c/USBErrorlog|C:USBErrorlog"
     "neptuneusb/NeptuneUSB|SYS:Prefs/NeptuneUSB"
     "usbeject/USBEject|SYS:WBStartup/USBEject"
-    "vhi/usbvideo.vhi|LIBS:VHI/usbvideo.vhi"
+    "vhi/neptune.vhi|LIBS:VHI/neptune.vhi"
 )
 # Optional per-gadget tools
 GADGET_TOOLS=(

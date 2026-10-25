@@ -47,7 +47,7 @@ Build traps:
 | `neptune.library/` | The stack core |
 | `classes/` | The `*.class` drivers (shared skeleton `class_main.c`, `common.h`) |
 | `neptuneusb/` | Neptune USB, the MUI prefs editor |
-| `c/`, `tools/`, `usbeject/`, `vhi/` | CLI commands, gadget tools, USBEject, `usbvideo.vhi` |
+| `c/`, `tools/`, `usbeject/`, `vhi/` | CLI commands, gadget tools, USBEject, `neptune.vhi` |
 | `romstartup/` | Kickstart-ROM startup resident; `scripts/build-kickstart.py` builds the image |
 | `include/` | Public headers; on-disk names and the Poseidon-prefs migration names in `nep_paths.h` |
 | `dist/`, `presets/` | Installer, icons, ReadMe template, sounds |

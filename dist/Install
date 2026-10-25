@@ -167,7 +167,7 @@
               "unmounts all volumes (refusing while files are open) before the drive is "
               "unplugged. It goes into SYS:WBStartup so it starts with Workbench; the same "
               "eject is also available from Neptune USB's Devices page.\n\n"
-              "usbvideo.vhi lets VHI programs such as cAMIra and VHI Studio use webcams, "
+              "neptune.vhi lets VHI programs such as cAMIra and VHI Studio use webcams, "
               "video grabbers and other USB Video Class devices. It goes into LIBS:VHI/ and "
               "needs no setup; without a VHI program it is simply unused.\n\n"
               "The settings-file icon adds a 'Neptune' datatype and a default Workbench icon, "
@@ -180,7 +180,7 @@
               "matching hardware.\n\n"
               "None of these is needed for the stack itself.")
         (choices "USBEject: safe-eject menu on Workbench"
-                 "usbvideo.vhi: USB webcams in VHI programs"
+                 "neptune.vhi: USB webcams in VHI programs"
                  "Settings-file icon (needs DefIcons)"
                  "Tools for specific USB gadgets")
         (default 7)))
@@ -208,9 +208,9 @@
     (
         (makedir "LIBS:VHI" (prompt "Creating LIBS:VHI") (help @makedir-help))
         (copylib
-            (prompt "Installing usbvideo.vhi into LIBS:VHI/")
+            (prompt "Installing neptune.vhi into LIBS:VHI/")
             (help @copylib-help)
-            (source "LIBS/VHI/usbvideo.vhi")
+            (source "LIBS/VHI/neptune.vhi")
             (dest "LIBS:VHI")
             (confirm "expert"))
     )

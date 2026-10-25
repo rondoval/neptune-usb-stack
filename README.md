@@ -70,12 +70,19 @@ Neptune is an incompatible fork:
   depends on V3 does not work with Neptune. The context interface is not part of Poseidon's
   API; a driver written to it works with Neptune only.
 - **Settings** live in `ENVARC:Sys/neptune.prefs`. If that file does not exist, Neptune
-  imports `poseidon.prefs` once on first start; `poseidon.prefs` itself is never changed.
-- **Names.** Commands and tools start with `USB` (`USBStart`, `USBRadio`, ...) and class
-  drivers end in `.usbclass`, so installing Neptune replaces no Poseidon 4.x command, tool
-  or class.
+  imports `poseidon.prefs` (6.0-6.2) once on first start; `poseidon.prefs` itself is never
+  changed. Poseidon 4.x keeps its settings in `ENVARC:PsdStackloader`, which Neptune does
+  not read.
+- **Names.** Commands and tools start with `USB` (`USBStart`, `USBRadio`, ...), class
+  drivers end in `.usbclass` and the VHI driver is `neptune.vhi`, so installing Neptune
+  replaces no Poseidon 4.x command, tool, class or VHI driver.
 - **One stack at a time.** Neptune does not start its USB controllers while Poseidon is
   loaded, and says why in its log; reboot without Poseidon, or quit it and run `Avail FLUSH`.
+  The Emu68 USB drivers refuse a controller the other stack already runs.
+- **Installing Poseidon 4.x next to Neptune.** Answer *No* when its installer offers to
+  create a configuration: that would give Poseidon every driver in `DEVS:USBHardware`,
+  Neptune's `xhci.device` included. Select `xhci-legacy.device` (Emu68 driver stack) on
+  Trident's Hardware page instead.
 
 ## Download and install
 
@@ -152,7 +159,7 @@ Each is `DEVS:USBClasses/<name>.usbclass`.
   stops the drive and says when it is safe to unplug.
 - **Gadget tools** (optional, `SYS:Tools/`): `USBRadio`, `USBPencam`, `USBSonixcam`,
   `USBRocket`, `USBPowMan`, `USBUPS`, `USBVideo`.
-- **`usbvideo.vhi`** (optional, `LIBS:VHI/`) lets VHI programs such as cAMIra use USB webcams.
+- **`neptune.vhi`** (optional, `LIBS:VHI/`) lets VHI programs such as cAMIra use USB webcams.
 
 ## Known limitations
 

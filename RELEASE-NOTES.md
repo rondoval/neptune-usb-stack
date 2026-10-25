@@ -82,7 +82,7 @@ Tested with a Logitech C930e, up to 1920x1080 at 30 frames a second.
 * **Formats:** Motion-JPEG and uncompressed (YUY2, NV12 and others) in every size and rate
   the camera offers, and H.264 from cameras that carry it inside Motion-JPEG, such as the
   C930e. Other H.264 and VP8 cameras and bulk-transfer cameras should work but are untested.
-* **cAMIra and other VHI programs:** the Installer offers to put `usbvideo.vhi` into
+* **cAMIra and other VHI programs:** the Installer offers to put `neptune.vhi` into
   `LIBS:VHI/`. Each camera is one input.
 * **Camera settings** in Neptune USB: brightness, exposure, focus, white balance and the other
   standard controls, applied at once and saved per camera.
