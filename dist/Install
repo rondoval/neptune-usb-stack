@@ -24,6 +24,9 @@
 ; packs the version in the high 16 bits (6 << 16 = 393216) and returns 0 for a missing file.
 ; A classic (4.x) Poseidon reports less and is never touched.
 (set #oldrelease (>= (getversion "LIBS:poseidon.library") 393216))
+; 1 when LIBS: holds a classic (4.x) poseidon.library. Its installer takes over the old block
+; in S:User-Startup for its own start command, so that block is then left alone.
+(set #classic (AND (> (getversion "LIBS:poseidon.library") 0) (NOT #oldrelease)))
 
 ;==========================================================================
 ; Installer version gate.
@@ -216,7 +219,7 @@
     )
 )
 
-; DEVS/DataTypes/Neptune  -> DEVS:DataTypes/Neptune  (datatypes identifies FORM..PSDC files)
+; DEVS/DataTypes/Neptune  -> DEVS:DataTypes/Neptune  (datatypes identifies FORM..NEPC files)
 ; Icons/def_Neptune.info  -> ENVARC:SYS/ + ENV:SYS/  (the icon Workbench paints on them)
 (complete 75)
 (if (in #extras 2)
@@ -262,12 +265,14 @@
 ;   Their S:User-Startup block is reduced to a comment, so the old stack is not started next
 ;   to Neptune and the boot does not stop on a removed command. Search returns 0 only when
 ;   the marker is present; without the test (startup) would add an empty block of that name.
+;   With a classic Poseidon installed the block is its own (see #classic) and stays.
 ;   Then the old files are removed on request. Files with a version are removed only if they
 ;   report 6 or newer; the unversioned ones (catalogs, sounds, datatype, icon) only when the
 ;   6.x library is installed. poseidon.prefs is kept: Neptune imports it.
 ;==========================================================================
 (complete 82)
-(if (= 0 (run (cat "C:Search >NIL: S:User-Startup \";BEGIN " #oldstartupname "\"") (safe)))
+(if (AND (NOT #classic)
+         (= 0 (run (cat "C:Search >NIL: S:User-Startup \";BEGIN " #oldstartupname "\"") (safe))))
     (startup #oldstartupname
         (prompt "Disable the Poseidon for AmigaOS 6.x start command in S:User-Startup?\n\n"
                 "Neptune replaces it. Left in place, it starts the old stack as well.")

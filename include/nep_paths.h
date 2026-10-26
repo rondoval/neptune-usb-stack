@@ -17,11 +17,14 @@
 #define NEP_PREFS_OWNER   "NeptuneUSB"
 
 /* Poseidon names. When no neptune.prefs exists, poseidon.prefs is loaded
-   and saved as neptune.prefs. Wherever prefs data enters the config (any
+   and saved as neptune.prefs - a 6.0-6.2 one only: a classic Poseidon's file is
+   that stack's own (pReadCfgFile()). Wherever prefs data enters the config (any
    load, any imported entry), the drawer prefixes, the class suffix and the owner
    key below are rewritten to the ones above (see pMigrateCfg()). */
 #define NEP_OLDPREFS_ENV      "ENV:Sys/poseidon.prefs"
 #define NEP_OLDPREFS_ENVARC   "ENVARC:Sys/poseidon.prefs"
+#define NEP_OLDPREFSFORM      MAKE_ID('P','S','D','C')  /* 6.0-6.2's and 4.x's outer FORM */
+#define NEP_OLDGLOBALCFGLEN   50    /* GCFG length 6.0-6.2 wrote: pgc_LogInfo to pgc_Reserved0 */
 #define NEP_OLDCLASSDRAWER    "SYS:Classes/USB"
 #define NEP_OLDPRESETDRAWER   "SYS:Prefs/Presets/Poseidon"
 #define NEP_OLDCLASSSUFFIX    ".class"

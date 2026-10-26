@@ -15,7 +15,7 @@
 /* Argument: the version nepPoseidonLoaded() returned. */
 #define NEP_OTHERSTACK_TXT \
     "Poseidon (" NEP_OLDLIBNAME " V%ld) is loaded; Neptune does not start. Only one USB " \
-    "stack can run at a time - reboot without Poseidon, or quit it and run Avail FLUSH."
+    "stack can run at a time - reboot without Poseidon."
 
 /* Version of a loaded Poseidon (poseidon.library in exec's library list), 0 if none.
    Any version counts: classic 4.x and the 6.0-6.2 fork alike. */

@@ -42,7 +42,7 @@ can pick up the other's classes.
 
 **One USB stack at a time:** Neptune does not start its USB controllers while Poseidon is
 loaded. `USBStart` and `USBAddHardware` say why and stop, and so does Neptune USB in its log;
-reboot without Poseidon, or quit it and run `Avail FLUSH`. A Neptune class whose device
+reboot without Poseidon. A Neptune class whose device
 (`usbscsi.device`, `usbparallel.device`, ...) another USB stack already provides does not
 start, and the log says so.
 
@@ -50,6 +50,7 @@ start, and the log says so.
 
 * It disables the `Poseidon USB Stack` block in `S:User-Startup`, so the old stack is not
   started next to Neptune, and adds a `Neptune USB Stack` block if you ask for autostart.
+  With a Poseidon 4.x installed the block is left alone: its installer uses it too.
 * It offers to remove the 6.0-6.2 files listed above. Only files that report version 6 or
   newer are removed, so a classic Poseidon is never touched, and `poseidon.prefs` is kept.
 * It removes the 6.0-6.2 copies of `AddUSBHardware`, `AddUSBClasses` and the optional tools,
@@ -60,11 +61,14 @@ start, and the log says so.
 **Your settings:** on first start, if there is no `neptune.prefs`, Neptune imports
 `poseidon.prefs`, moves the class and sound paths to the new drawers and class names, and saves
 the result as `neptune.prefs`. Loading an old settings file by hand converts it the same way.
+A classic Poseidon's (4.x) `poseidon.prefs` is not imported: Neptune starts with its defaults.
+Neptune saves its settings in a format of its own, which Poseidon does not read.
 Neptune USB's saved window positions start afresh, because the program's name changed.
 
 **Programmers:** the library is opened as `NEPTUNENAME` (`"neptune.library"`), version
 `NEPTUNE_LIB_MIN_VERSION`, with `<libraries/neptune.h>` and `<proto/neptune.h>`; the base is
-`NeptuneBase`. The `psd*()` function names, structures and tags are unchanged.
+`NeptuneBase`. The `psd*()` function names, structures and tags are unchanged; the settings
+file's outer form is `IFFFORM_NEPCFG` (`NEPC`, was `IFFFORM_PSDCFG`).
 The class protocol header is now `<libraries/neptune_class.h>`, with
 `<proto/neptune_class.h>` (was `usbclass.h`, the name PoseidonDev uses); the base
 `UsbClsBase`, the `usb*()` functions, tags and methods are unchanged. A class is built as

@@ -63,8 +63,9 @@ Open work lives in `docs/implementation-plan.md` only.
 - **The legacy HCD ABI is frozen.** `IOUsbHWReq` V1+V2 layout and all `UHCMD_*`/`UHIOERR_*`/
   `UHFB_*`/`UHCF_*` values are binary contract with classic HCDs. Neptune does not implement
   Poseidon's V3 interface; new HCD capabilities go into the context ABI, never into the request.
-- **Settings file format is fixed:** the IFF IDs (`PSDC`, `STKC`, …) stay, and
-  `struct PsdGlobalCfg` is the raw `GCFG` chunk - append-only, retired fields keep their slot.
+- **Settings file format is fixed:** the outer form is Neptune's `NEPC`; a `PSDC` file (6.0-6.2,
+  but also classic 4.x) loads only with 6.x's `GCFG` length. The other IFF IDs (`STKC`, …) stay,
+  and `struct PsdGlobalCfg` is the raw `GCFG` chunk - append-only, retired fields keep their slot.
 - **Catalogs:** a `MSG_*` number is both the catalog id and the `CatCompArray` index; adding,
   removing or reordering messages needs a `CATALOG_VERSION` bump. `.ct` files are ISO-8859 or
   cp1251 - use `grep -a`.

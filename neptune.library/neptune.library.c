@@ -123,7 +123,7 @@ int libOpen(struct PsdBase * ps)
             ps->ps_ReleaseVersion = RELEASEVERSION;
             ps->ps_OSVersion = MAKE_ID('A','R','O','S');
 
-            pic = pAllocForm(ps, NULL, IFFFORM_PSDCFG);
+            pic = pAllocForm(ps, NULL, IFFFORM_NEPCFG);
             if((ps->ps_GlobalCfg = psdAllocVec(sizeof(struct PsdGlobalCfg)))) {
                 ps->ps_GlobalCfg->pgc_ChunkID = AROS_LONG2BE(IFFCHNK_GLOBALCFG);
                 ps->ps_GlobalCfg->pgc_Length = AROS_LONG2BE(sizeof(struct PsdGlobalCfg)-8);
@@ -8574,14 +8574,27 @@ static BOOL pMigrateCfg(struct PsdBase *ps)
 }
 /* \\\ */
 
-/* /// "pLoadCfgFile()" */
-/* Load and apply one prefs file, migrating old names first (pMigrateCfg()).
-   Returns RETURN_OK, RETURN_WARN (no such file) or RETURN_ERROR (not a usable
-   prefs file). */
-static UWORD pLoadCfgFile(struct PsdBase *ps, STRPTR filename)
+/* How every release's prefs file starts: the stack form comes first, and the
+   global settings chunk first in it. */
+struct CfgFileHead {
+    ULONG form, formlen, type;          /* FORM <len> NEPC/PSDC; len counts from the type on */
+    ULONG stkform, stklen, stkc;        /* FORM <len> STKC */
+    ULONG gcfg, gcfglen;                /* GCFG <len> */
+};
+
+/* /// "pReadCfgFile()" */
+/* Read one prefs file whole: Neptune's own (FORM NEPC) or one of 6.0-6.2's
+   (FORM PSDC). A classic Poseidon (4.x) writes FORM PSDC too, but its global
+   settings chunk has another length: such a file is that stack's own, and its
+   settings neither fit nor are Neptune's to take. Returns RETURN_OK with *buf
+   (the caller frees it with psdFreeVec()), RETURN_WARN (no such file),
+   RETURN_ERROR (not a prefs file) or RETURN_FAIL (a classic Poseidon's,
+   reported here). */
+static UWORD pReadCfgFile(struct PsdBase *ps, STRPTR filename, ULONG **buf)
 {
     XPRINTF(10, ("Loading config file: %s\n", filename));
 
+    *buf = NULL;
     BPTR filehandle = Open(filename, MODE_OLDFILE);
     KPRINTF(1, ("File handle 0x%08lx\n", filehandle));
     if(!filehandle) {
@@ -8589,36 +8602,54 @@ static UWORD pLoadCfgFile(struct PsdBase *ps, STRPTR filename)
     }
 
     UWORD level = RETURN_ERROR;
-    ULONG formhead[3];
-    if((Read(filehandle, formhead, 12) == 12) &&
-       (AROS_LONG2BE(formhead[0]) == ID_FORM) && (AROS_LONG2BE(formhead[2]) == IFFFORM_PSDCFG)) {
-        ULONG formlen = AROS_LONG2BE(formhead[1]);
-        KPRINTF(1, ("Header OK, %lu bytes\n", formlen));
+    struct CfgFileHead head;
+    if((Read(filehandle, &head, sizeof(head)) == sizeof(head)) && (AROS_LONG2BE(head.form) == ID_FORM)) {
+        ULONG type = AROS_LONG2BE(head.type);
+        if((type == NEP_OLDPREFSFORM) &&
+           ((AROS_LONG2BE(head.stkc) != IFFFORM_STACKCFG) || (AROS_LONG2BE(head.gcfg) != IFFCHNK_GLOBALCFG) ||
+            (AROS_LONG2BE(head.gcfglen) != NEP_OLDGLOBALCFGLEN))) {
+            psdAddErrorMsg(RETURN_WARN, (STRPTR) libname,
+                           "'%s' was written by a classic Poseidon: not loaded.", filename);
+            level = RETURN_FAIL;
+        } else if((type == IFFFORM_NEPCFG) || (type == NEP_OLDPREFSFORM)) {
+            ULONG size = sizeof(head.form) + sizeof(head.formlen) + AROS_LONG2BE(head.formlen);
+            KPRINTF(1, ("Header OK, %lu bytes\n", size));
 
-        ULONG *buf = (ULONG *) psdAllocVec(formlen + 8);
-        if(buf) {
-            buf[0] = formhead[0];
-            buf[1] = formhead[1];
-            buf[2] = formhead[2];
-            if(Read(filehandle, &buf[3], formlen - 4) == formlen - 4) {
-                KPRINTF(1, ("Data read OK\n"));
-
-                psdReadCfg(NULL, buf);
-                BOOL migrated = pMigrateCfg(ps);
-                psdParseCfg();      /* records the live config as saved */
-
-                KPRINTF(1, ("All done\n"));
-                level = RETURN_OK;
-                /* a migrated config matches no file until it is saved */
-                if(migrated) {
-                    ps->ps_SavedConfigHash = ~ps->ps_ConfigHash;
+            ULONG *data = (size >= sizeof(head)) ? (ULONG *) psdAllocVec(size) : NULL;
+            if(data) {
+                CopyMem(&head, data, sizeof(head));
+                if(Read(filehandle, ((UBYTE *) data) + sizeof(head), size - sizeof(head)) == size - sizeof(head)) {
+                    KPRINTF(1, ("Data read OK\n"));
+                    *buf = data;
+                    level = RETURN_OK;
+                } else {
+                    psdFreeVec(data);
                 }
             }
-            psdFreeVec(buf);
         }
     }
     Close(filehandle);
     return(level);
+}
+/* \\\ */
+
+/* /// "pApplyCfg()" */
+/* Make buf, a whole prefs file, the live config. A 6.0-6.2 file becomes
+   Neptune's on the way: its form type here, its old names in pMigrateCfg().
+   TRUE if anything was converted. */
+static BOOL pApplyCfg(struct PsdBase *ps, ULONG *buf)
+{
+    struct CfgFileHead *head = (APTR) buf;
+    BOOL migrated = (AROS_LONG2BE(head->type) != IFFFORM_NEPCFG);
+    head->type = AROS_LONG2BE(IFFFORM_NEPCFG);      /* psdReadCfg() takes only the root's own type */
+    psdReadCfg(NULL, buf);
+    migrated |= pMigrateCfg(ps);
+    psdParseCfg();      /* records the live config as saved */
+    /* a migrated config matches no file until it is saved */
+    if(migrated) {
+        ps->ps_SavedConfigHash = ~ps->ps_ConfigHash;
+    }
+    return(migrated);
 }
 /* \\\ */
 
@@ -8632,21 +8663,30 @@ BOOL (psdLoadCfgFromDisk)(STRPTR filename asm("a1"), struct PsdBase * ps asm("a6
 
     if(!filename) {
         /* Neptune's own prefs first; without them, a one-time import of
-           Poseidon's, saved straight away as neptune.prefs so it is not
-           repeated. A missing file is only reported if all are missing.
+           Poseidon's (6.0-6.2). Either is saved straight away as neptune.prefs
+           when it was converted (an import always), so the conversion happens
+           once. With a classic Poseidon's file (pReadCfgFile()) Neptune starts
+           with its defaults. A missing file is only reported if all are missing.
            Local array: a static pointer table would need a .data section. */
         STRPTR names[4] = { NEP_PREFS_ENV, NEP_PREFS_ENVARC, NEP_OLDPREFS_ENV, NEP_OLDPREFS_ENVARC };
 
         for(ULONG i = 0; i < 4; i++) {
             BOOL imported = (i >= 2);
-            UWORD level = pLoadCfgFile(ps, names[i]);
+            ULONG *buf;
+            UWORD level = pReadCfgFile(ps, names[i], &buf);
             if(level == RETURN_OK) {
-                if(imported && psdSaveCfgToDisk(NULL)) {
+                BOOL migrated = pApplyCfg(ps, buf);
+                psdFreeVec(buf);
+                if((imported || migrated) && psdSaveCfgToDisk(NULL)) {
                     psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
-                                   "Settings imported from '%s' and saved to '%s'.",
+                                   imported ? "Settings imported from '%s' and saved to '%s'."
+                                            : "Settings in '%s' converted to Neptune's format and saved to '%s'.",
                                    names[i], NEP_PREFS_ENVARC);
                 }
                 return(TRUE);
+            }
+            if(level == RETURN_FAIL) {
+                return(FALSE);
             }
             if(level == RETURN_ERROR) {
                 psdAddErrorMsg(RETURN_ERROR, (STRPTR) libname, "Failed to load config from '%s'!", names[i]);
@@ -8656,13 +8696,21 @@ BOOL (psdLoadCfgFromDisk)(STRPTR filename asm("a1"), struct PsdBase * ps asm("a6
         return(FALSE);
     }
 
-    UWORD level = pLoadCfgFile(ps, filename);
-    if(level != RETURN_OK) {
+    /* a file loaded by name stays as it is (a converted one is only marked
+       unsaved) */
+    ULONG *buf;
+    UWORD level = pReadCfgFile(ps, filename, &buf);
+    if(level == RETURN_OK) {
+        pApplyCfg(ps, buf);
+        psdFreeVec(buf);
+        return(TRUE);
+    }
+    if(level != RETURN_FAIL) {
         psdAddErrorMsg(level, (STRPTR) libname,
                        "Failed to %s '%s'!", (level == RETURN_ERROR) ? "load config from" : "find config file",
                        filename);
     }
-    return((BOOL) (level == RETURN_OK));
+    return(FALSE);
 }
 /* \\\ */
 

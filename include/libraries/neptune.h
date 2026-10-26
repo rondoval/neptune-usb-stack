@@ -380,15 +380,9 @@
 
 /* Configuration stuff */
 
-/* Outermost prefs FORM ID. The IFF *contents* are not endian-agnostic, so AROS made this ID
- * endian-specific ('PSBC' big / 'PSLC' little), distinct from Chris Hodges' classic AmigaOS
- * Poseidon (v4.5) 'PSDC'.
- * I didn't see any significant changes in the source code, so I'm assuming it is compatible
- * with the 4.x line prefs format. 
- * We therefore use the original 'PSDC' to keep existing classic-Poseidon prefs loading.
- * NOTE: if on-hardware testing shows the prefs are NOT compatible with classic 4.5, switch this to
- * the AROS big-endian ID MAKE_ID('P','S','B','C'). */
-#define IFFFORM_PSDCFG     MAKE_ID('P','S','D','C')
+/* Outermost prefs FORM ID: Neptune's own, so its files are told from Poseidon's 'PSDC'
+ * (written by 6.0-6.2 and by the classic 4.x line, whose settings don't fit Neptune). */
+#define IFFFORM_NEPCFG     MAKE_ID('N','E','P','C')
 #define IFFFORM_STACKCFG   MAKE_ID('S','T','K','C')
 #define IFFFORM_DEVICECFG  MAKE_ID('D','E','V','C')
 #define IFFFORM_CLASSCFG   MAKE_ID('C','L','S','C')

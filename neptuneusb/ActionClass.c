@@ -939,7 +939,7 @@ void RecursePrefsForm(struct ActionData *data, ULONG *form, ULONG depth, STRPTR 
     strcpy(newstack, stack);
     *((ULONG *) &newstack[strlen(stack)]) = AROS_LONG2BE(formid);
 
-    if(AROS_LONG2BE(*((ULONG *) newstack)) != IFFFORM_PSDCFG)
+    if(AROS_LONG2BE(*((ULONG *) newstack)) != IFFFORM_NEPCFG)
     {
         owner = GetStringChunk(form, IFFCHNK_OWNER, "Unknown");
         id = psdCopyStr("This is not a Neptune prefs file!");
@@ -4642,7 +4642,8 @@ IPTR Action_Cfg_Import(struct IClass *cl, Object *obj, Msg msg)
                                     MUI_RequestA(data->appobj, data->winobj, 0, NULL, _(MSG_REQ_OK), _(MSG_ACTION_CFGDATA_OOPS_HELP), NULL);
                                     break;
 
-                                case IFFFORM_PSDCFG:
+                                case IFFFORM_NEPCFG:
+                                case NEP_OLDPREFSFORM:      /* psdLoadCfgFromDisk() tells 6.x from 4.x */
                                     psdLoadCfgFromDisk(path);
                                     break;
 

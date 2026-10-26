@@ -583,7 +583,7 @@ answer busy with a reason. Only if all agree does it disable the parent port; th
 
 ```mermaid
 flowchart TD
-    ROOT["FORM PSDC"] --> STKC["FORM STKC - stack: GCFG, INSF, RMSF"]
+    ROOT["FORM NEPC"] --> STKC["FORM STKC - stack: GCFG, INSF, RMSF"]
     ROOT --> CLSC["FORM CLSC (n) - class: OWNR, FORM GCPD"]
     ROOT --> DEVC["FORM DEVC (n) - device: DVID, FBND"]
     STKC --> UHWD["FORM UHWD (n) - controller: NAME, UNIT, OFFL"]
@@ -598,12 +598,19 @@ flowchart TD
   `psdGetCfgChunk` (an allocated copy) or `psdWriteCfg`. Neptune USB keeps the custom name and the
   popup and power chunk in the device data it owns.
 - **Load** (`psdLoadCfgFromDisk(NULL)`) tries `ENV:Sys/neptune.prefs`, then `ENVARC:`, then the same
-  pair of `poseidon.prefs`. A Poseidon file is saved straight back as `neptune.prefs`, so the import
-  happens once; `poseidon.prefs` is never written. Each file replaces the tree, passes through
+  pair of `poseidon.prefs`. Neptune's files are `FORM NEPC`; 6.0-6.2 and the classic 4.x line both
+  wrote `FORM PSDC`, so `pReadCfgFile` takes a `PSDC` file only with 6.x's `GCFG` length (50 bytes;
+  4.5 writes 54). A classic file is that stack's own: Neptune starts with defaults, and a file
+  loaded by name is refused the same way. A Poseidon file is saved straight back as
+  `neptune.prefs`, so the import happens once; `poseidon.prefs` is never written. Each file
+  replaces the tree (a `PSDC` one takes Neptune's form type on the way, in `pApplyCfg`), passes through
   `pMigrateCfg`, which rewrites Poseidon's names - class drawer, sound drawer, the prefs editor's
-  owner key - to Neptune's (`nep_paths.h`), and is applied (§5.1). A load that migrated anything
-  is marked unsaved, since no file holds that tree yet. `psdAddCfgEntry` migrates too. Migration
-  is idempotent and keeps no state.
+  owner key - to Neptune's (`nep_paths.h`), and is applied (§5.1). The default load saves a file
+  that migrated anything straight back, like an import, so the conversion happens once (a mark
+  alone would not last: `psdParseCfg`, which `USBStart` and Neptune USB call again after the load,
+  records the applied config as saved). A file loaded by name is only marked unsaved, since no
+  file holds that tree yet. `psdAddCfgEntry` migrates too. Migration is idempotent and keeps no
+  state.
 - **Save** (`psdSaveCfgToDisk(NULL)`) writes the live global settings into `GCFG`, then `ENVARC:`
   and `ENV:`.
 - **Change detection.** Changes raise a check request or check at once (`pCheckCfgChanged`): a

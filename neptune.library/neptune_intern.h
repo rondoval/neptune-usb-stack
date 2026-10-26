@@ -39,7 +39,7 @@
    copied in each case (the length is given in the form).
 
    The configuration normally looks like this:
-   FORM PSDC (Poseidon Config file)
+   FORM NEPC (Neptune config file)
 
 [1*] FORM STKC (Stack config)
 [n*]   FORM UDEV (USB hardware device)

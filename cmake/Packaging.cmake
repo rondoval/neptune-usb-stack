@@ -57,7 +57,7 @@ install(TARGETS NeptuneUSB RUNTIME DESTINATION Prefs)
 install(FILES ${CMAKE_SOURCE_DIR}/dist/NeptuneUSB.info DESTINATION Prefs)
 
 # Settings-file datatype + default icon. DefIcons (a standard 3.2 WBStartup component)
-# identifies FORM..PSDC settings files via the Neptune datatype and paints def_Neptune.info on
+# identifies FORM..NEPC settings files via the Neptune datatype and paints def_Neptune.info on
 # the ones that lack their own icon. Descriptor -> DEVS:DataTypes/Neptune ;
 # def_Neptune.info -> ENV(ARC):SYS/.
 install(FILES ${CMAKE_SOURCE_DIR}/dist/datatypes/Neptune DESTINATION DEVS/DataTypes)

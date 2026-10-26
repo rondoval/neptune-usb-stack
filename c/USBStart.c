@@ -2,7 +2,7 @@
 ** USBStart starts the stack: it is the one command the startup needs.
 **
 ** What should run comes from ENVARC:Sys/neptune.prefs (on first start, imported
-** from poseidon.prefs and saved). Where the prefs say nothing, defaults stand in:
+** from a 6.0-6.2 poseidon.prefs and saved). Where the prefs say nothing, defaults stand in:
 ** every class in DEVS:USBClasses, and the host controller named on the command
 ** line. USBAddClasses and USBAddHardware do those two jobs by hand; they are not
 ** needed at startup.
