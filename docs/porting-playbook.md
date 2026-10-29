@@ -343,8 +343,9 @@ below it either - the vendored `mounter/` submodule is V40-only like the rest of
 fallback.
 
 Three exceptions stand, each runtime-gated rather than avoided, and each documented where it lives:
-`IND_ADDEVENT` (`input.device` V47) in `hid.class`, gated on the device's own `lib_Version >= 47`
-with an `IND_WRITEEVENT` fallback ([hid.class-architecture.md](hid.class-architecture.md) §5.6, §6 rule 2);
+`IND_ADDEVENT` (`input.device` V47) in `hid.class`, `bootkeyboard.class` and `bootmouse.class`,
+gated on the device's own `lib_Version >= 47` and its `NSCMD_DEVICEQUERY` answer listing the
+command (`nInputHasAddEvent()`, `classes/common.h`), with an `IND_WRITEEVENT` fallback ([hid.class-architecture.md](hid.class-architecture.md) §5.6, §6 rule 2);
 `WBAPPMENUA_GetTitleKey`/`WBAPPMENUA_UseKey` (`workbench.library` V45) in USBEject, *probed* rather
 than version-tested, so an older library simply ignores the tag (`usbeject/USBEject.c`); and
 `SetJoyPortAttrsA`, which is a *revision* - `lowlevel.library` **V40.27** - that `OpenLibrary()`

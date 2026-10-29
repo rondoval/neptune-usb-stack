@@ -199,9 +199,11 @@ joyport types only set state that the flush or the patch consumes.
 ### 5.6 Feeding input.device
 
 `IND_ADDEVENT` is `input.device` V47 (AmigaOS 3.2). It differs from `IND_WRITEEVENT` only in also
-updating `input.device`'s state, which makes a held key auto-repeat. `nAllocHid` tests the opened
-device's `lib_Version >= 47` once (`nch_OS4Hack`, copied to `nh_OS4Hack` for the dispatcher) and
-logs the result (rule 2). Below V47 only the repeat is lost; the class tracks qualifiers itself.
+updating `input.device`'s state, which makes a held key auto-repeat. `nAllocHid` asks the opened
+device once, with `nInputHasAddEvent()` (`classes/common.h`; `bootkeyboard` and `bootmouse` use the
+same helper): `lib_Version >= 47` **and** `IND_ADDEVENT` listed in its `NSCMD_DEVICEQUERY` answer.
+The result goes to `nch_OS4Hack`, copied to `nh_OS4Hack` for the dispatcher, and is logged with the
+device's version (rule 2). Without it only the repeat is lost; the class tracks qualifiers itself.
 Gated: key edges (`nSendRawKey`), relative mouse, buttons 1-3, key strings. Always
 `IND_WRITEEVENT`: the wheel (rule 3), absolute/tablet events, the NewMouse button event, close-window.
 
@@ -276,8 +278,11 @@ Each rule exists because breaking it caused, or would cause, a real failure.
    key until this task delivers the key-up. At priority 5, a CPU-bound console handler or a
    scheduler working the low band (Executive) delayed key-ups by seconds, and every repeat period
    became a phantom key press.
-2. **`IND_ADDEVENT` is gated on `input.device`'s own version.** Ungated, a pre-V47 device rejects it
-   with `IOERR_NOCMD`, nothing checks `io_Error`, and HID keyboards and mice are silently dead.
+2. **`IND_ADDEVENT` is gated on what `input.device` itself reports.** Ungated, a pre-V47 device
+   rejects it with `IOERR_NOCMD`, nothing checks `io_Error`, and HID keyboards and mice are silently
+   dead. The version alone is not enough: the 68k `input.device` 50.x (50.26, 2003) is V50 but
+   predates 3.2, does not answer `NSCMD_DEVICEQUERY`, and treats command 24 as something else - a
+   key sent with it repeats for ever. The 3.2 `input.device` (47.1) answers the query and lists 24.
 3. **The wheel uses `IND_WRITEEVENT`.** N downs and one up are not a held key; under `IND_ADDEVENT`
    a late up adds scroll steps.
 4. **Never send a key with no Amiga code.** The keymap's `0xff` ("no key") is unchanged by

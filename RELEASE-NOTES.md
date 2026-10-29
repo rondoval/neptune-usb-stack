@@ -123,6 +123,9 @@ interface once in the MIDI Ports editor.
 * Possible crash when a class driver was unloaded while still in use.
 * Better recovery from errors on UAS disks.
 * Possible crash on disk change with several partitions.
+* **USB keyboards with `input.device` 50.x** (the 2003 68k one, version 50.26, found in some
+  custom Kickstarts): a key pressed once no longer repeats for ever. The classes now use the
+  3.2 `input.device` command only when the device reports that it has it.
 
 # Release notes - Neptune 6.2 (released as Poseidon for AmigaOS 6.2)
 

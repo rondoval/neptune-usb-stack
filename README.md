@@ -164,7 +164,8 @@ In **Neptune USB** (`SYS:Prefs/NeptuneUSB`):
 - **Not tested with classic Amiga USB cards.** The legacy interface works (`xhci.device` 5.x
   runs on it), but no Deneb, Subway or similar card has been tried.
 - **Below OS 3.2, held keys do not auto-repeat** - `input.device` gained the command that
-  drives repeat (`IND_ADDEVENT`) in V47.
+  drives repeat (`IND_ADDEVENT`) in V47. The same holds for the 68k `input.device` 50.x, which
+  does not have it either.
 - **Below `workbench.library` 45**, USBEject's items sit flat in the Tools menu.
 - **On `lowlevel.library` older than 40.27**, gamepads have no analogue stick or rumble.
 - **HID sound and key-string actions** need `datatypes.library` and `commodities.library`;
