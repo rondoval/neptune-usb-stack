@@ -457,6 +457,10 @@ static ULONG initUsbRom(ULONG            dummy   asm("d0"),
         waitForBootDevices(ps, msdclass, hubclass, hubssclass, origin);
     }
 
-    CloseLibrary(ps);
+    /* No CloseLibrary(ps): the ROM-resident stack keeps this reference for good.
+       psdClassScan() has started the event handler and notification tasks, and with
+       no device bound nothing else holds the library open; at lib_OpenCnt 0 a memory
+       flush (Avail FLUSH) runs LibExpunge, which Wait()s for those tasks inside
+       Expunge (breaking the Forbid() exec holds there) and then frees the base. */
     return 0;
 }
