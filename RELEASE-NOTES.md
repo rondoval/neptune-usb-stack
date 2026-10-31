@@ -91,7 +91,13 @@ Tested with a Logitech C930e, up to 1920x1080 at 30 frames a second.
 * **Camera settings** in Neptune USB: brightness, exposure, focus, white balance and the other
   standard controls, applied at once and saved per camera.
 * **`USBVideo`** (optional tools) lists a camera's modes and saves pictures or H.264 video,
-  e.g. `USBVideo TO=RAM:shot`.
+  e.g. `USBVideo TO=RAM:shot`. From its icon, or with `USBVideo GUI`, it opens a window (needs
+  MUI) to pick a camera and a mode, take snapshots, record, and open the camera's settings.
+* **A live picture from the camera:** with `videocodec.library` installed (PiStorm on a
+  Raspberry Pi 4 or CM4) and a Picasso96 Workbench, starting an MJPEG or H.264 mode opens a
+  second window with the picture, decoded by the VideoCore. Drag its corner to any size.
+  `USBVideo PREVIEW` does the same from the Shell, without MUI. If the picture never comes, the
+  VideoCore is short of memory: raise `gpu_mem` in `config.txt`.
 * **The camera's microphone** shows up as an AHI recording mode, and an idle camera is
   suspended when power saving is on.
 

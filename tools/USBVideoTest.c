@@ -42,12 +42,21 @@
  *                                  (default mode if omitted); TO saves them.
  *                                  The driver delivers JPEG, or YUY2 if the
  *                                  camera has no MJPG; YUY2 is not saved
+ *   USBVideoTest PREVIEW           run the stream process of USBVideo: FRAMES
+ *                                  (default 300) through the decoder into its
+ *                                  window, which moves and changes size on the
+ *                                  way; the pictures must keep up. In the
+ *                                  mode of WIDTH/HEIGHT/FPS/FORMAT, TO saves
+ *                                  too. With CYCLES=n, then n x start, 30
+ *                                  frames, stop, and all memory must be back
  *
  * Device API only, no neptune.library calls.
  */
 
 #include <proto/dos.h>
 #include <proto/exec.h>
+#include <proto/intuition.h>
+#include <proto/videocodec.h>
 
 #include <dos/dos.h>
 #include <exec/errors.h>
@@ -55,6 +64,7 @@
 #include <exec/memory.h>
 #include <devices/usb_video.h>
 #include <devices/usbvideodevice.h>
+#include <libraries/videocodec.h>
 #include <vhi/vhi.h>
 
 #include <inline/macros.h>
@@ -62,6 +72,7 @@
 #include <neptune_version.h>
 
 #include "uvc_client.h"
+#include "uvc_preview.h"
 #include "mjpegdht.h"
 
 /* ReadArgs indices, in template order */
@@ -81,13 +92,20 @@ enum
     ARGS_FORMAT,
     ARGS_BITRATE,
     ARGS_KEYFRAME,
+    ARGS_PREVIEW,
     ARGS_SIZEOF
 };
 
 #define TICKS_PER_SEC 50
+#define PREVIEW_FRAMES       300 /* frames of a preview test */
+#define PREVIEW_CYCLE_FRAMES 30  /* frames of each start and stop */
+#define PREVIEW_POLL_TICKS   5
+#define PREVIEW_SLOW_FPS     5   /* a camera in the dark: what the time limit allows for */
+#define PREVIEW_TOLERATED    10  /* in 100 pictures, those that may be missing at the end: the decoder's lag */
+#define PREVIEW_MEMORY_SLACK 65536 /* bytes not back after the cycles: what others may have taken */
 
 const char USBVideoTest_prgname[] = "USBVideoTest";
-static const char *template = "UNIT/N/K,PROBE/S,WIDTH/N/K,HEIGHT/N/K,FPS/N/K,FRAMES/N/K,TO/K,CYCLES/N/K,VHI/S,CONTROLS/S,EVENTS/N/K,FORMAT/K,BITRATE/N/K,KEYFRAME/N/K";
+static const char *template = "UNIT/N/K,PROBE/S,WIDTH/N/K,HEIGHT/N/K,FPS/N/K,FRAMES/N/K,TO/K,CYCLES/N/K,VHI/S,CONTROLS/S,EVENTS/N/K,FORMAT/K,BITRATE/N/K,KEYFRAME/N/K,PREVIEW/S";
 const char USBVideoTest_version[] = NEP_VER("USBVideoTest");
 static LONG ArgsArray[ARGS_SIZEOF];
 
@@ -306,12 +324,9 @@ static BOOL captureFrames(struct UvcCamera *cm, struct UsbVideoModeReq *uvq, ULO
                 {
                     nostart = TRUE;
                 }
-                /* key frame: first NAL unit is an SPS (7) or IDR slice (5) */
-                if(isstream && (len > 5))
+                if(isstream)
                 {
-                    ULONG kind = (jpeg[2] ? jpeg[3] : jpeg[4]) & 0x1f;
-
-                    keyframes += ((kind == 7) || (kind == 5)) ? 1 : 0;
+                    keyframes += uvcH264Key(jpeg, len) ? 1 : 0;
                 }
             }
             else if((len < 4) || (jpeg[0] != 0xff) || (jpeg[1] != 0xd8) ||
@@ -604,25 +619,6 @@ static BOOL completeJpegSize(const UBYTE *jpeg, ULONG len, ULONG *width, ULONG *
 
 #define MODE_AREA(uvm) ((ULONG) (uvm)->uvm_Width * (uvm)->uvm_Height)
 
-/* Return the mode with that FourCC and size, NULL if none; width = height
-   = 0 matches any size */
-static struct UsbVideoMode * findMode(struct UsbVideoMode *table, ULONG tablesize, ULONG fourcc,
-                                      ULONG width, ULONG height)
-{
-    for(ULONG pos = 0; pos < tablesize; )
-    {
-        struct UsbVideoMode *uvm = (struct UsbVideoMode *) ((UBYTE *) table + pos);
-
-        if((uvm->uvm_FourCC == fourcc) &&
-           (!(width || height) || ((uvm->uvm_Width == width) && (uvm->uvm_Height == height))))
-        {
-            return uvm;
-        }
-        pos += uvm->uvm_Size;
-    }
-    return NULL;
-}
-
 /* Grab frames pictures through the driver at askwidth x askheight, passed
    unchecked as a client would (0 x 0 = default mode def). Alternate client
    and system allocation. Each picture must be a complete JPEG (driver uses
@@ -771,7 +767,7 @@ static BOOL testVhiDriver(ULONG input, struct UsbVideoMode *table, ULONG tablesi
     STRPTR why = NULL;
 
     /* the driver uses the MJPG modes, or YUY2 if the camera has no MJPG */
-    ULONG fourcc = findMode(table, tablesize, UVFCC_MJPG, 0, 0) ? UVFCC_MJPG : UVFCC_YUY2;
+    ULONG fourcc = uvcFindMode(table, tablesize, UVFCC_MJPG, 0, 0) ? UVFCC_MJPG : UVFCC_YUY2;
 
     for(ULONG pos = 0; pos < tablesize; )
     {
@@ -889,7 +885,7 @@ static BOOL testVhiDriver(ULONG input, struct UsbVideoMode *table, ULONG tablesi
         vhi_api(VHI_METHOD_PERFORM, VHI_CHECK_DIGITIZE_SIZE, &dim, &vhierr, handle);
         Printf("%ldx%ld asked gives %ldx%ld\n", (ULONG) asked[cnt][0], (ULONG) asked[cnt][1],
                dim.dst_width, dim.dst_height);
-        if(vhierr || (asked[cnt][0] ? !findMode(table, tablesize, fourcc, dim.dst_width, dim.dst_height)
+        if(vhierr || (asked[cnt][0] ? !uvcFindMode(table, tablesize, fourcc, dim.dst_width, dim.dst_height)
                                     : (dim.dst_width || dim.dst_height)))
         {
             why = "a size was answered with one the camera does not have";
@@ -1659,6 +1655,186 @@ static BOOL testControlsAndEvents(struct IOStdReq *ioreq, struct MsgPort *port, 
     return ok;
 }
 
+/* What the preview window does while a test runs: left, top, width and
+   height change by these, as they would by a user's drags. Intuition reports
+   them alike. */
+static const WORD PreviewSteps[][4] =
+{
+    { 100, 50, 0, 0 },
+    { 0, 0, 320, 180 },
+    { 0, 0, -240, -135 }
+};
+#define PREVIEW_STEPS (sizeof(PreviewSteps) / sizeof(PreviewSteps[0]))
+
+/* Take step step of PreviewSteps, the window kept on its screen */
+static void stepWindow(struct Window *win, ULONG step)
+{
+    LONG width = win->Width + PreviewSteps[step][2];
+    LONG height = win->Height + PreviewSteps[step][3];
+    LONG left = win->LeftEdge + PreviewSteps[step][0];
+    LONG top = win->TopEdge + PreviewSteps[step][1];
+
+    if(left + width > win->WScreen->Width)
+    {
+        left = win->WScreen->Width - width;
+    }
+    if(top + height > win->WScreen->Height)
+    {
+        top = win->WScreen->Height - height;
+    }
+    ChangeWindowBox(win, (left < 0) ? 0 : left, (top < 0) ? 0 : top, width, height);
+}
+
+/* Print what a stream did. TRUE if the pictures kept up with what was sent. */
+static BOOL previewCounts(const struct UvpCounts *uc)
+{
+    Printf("%ld frames, %ld bytes, %ld lost, %ld held back\n", uc->uc_Frames, uc->uc_Bytes, uc->uc_Lost, uc->uc_Held);
+    Printf("%ld sent, %ld pictures, %ld shown, %ld saved; lag %ld frames at the end, %ld at most\n", uc->uc_Sent,
+           uc->uc_Pictures, uc->uc_Shown, uc->uc_Saved, uc->uc_Lag, uc->uc_LagMost);
+    if(!uc->uc_Sent || !uc->uc_Shown)
+    {
+        PutStr("FAIL: no picture reached the window\n");
+        return FALSE;
+    }
+    if(uc->uc_Pictures * 100 < uc->uc_Sent * (100 - PREVIEW_TOLERATED))
+    {
+        PutStr("FAIL: the decoder fell behind\n");
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/* Run a stream until frames frames came; if steps, the window takes its
+   steps on the way, and pictures must come after the last. TRUE = PASS. */
+static BOOL previewStream(struct UvcPreview *up, const struct UsbVideoModeReq *uvq, ULONG frames, BOOL steps, STRPTR stem)
+{
+    const struct UvpCounts *uc = uvpCounts(up);
+    ULONG limit = (frames / PREVIEW_SLOW_FPS + 10) * TICKS_PER_SEC;
+    ULONG ticks = 0;
+    ULONG step = 0;
+    ULONG shownthen = 0;
+
+    if(!uvpStart(up, uvq, stem))
+    {
+        Printf("FAIL: %s\n", uvpWhy(up));
+        return FALSE;
+    }
+    if(uvpWhy(up)[0])
+    {
+        Printf("%s\n", uvpWhy(up));
+    }
+    if(stem && !uvpRecord(up, TRUE))
+    {
+        Printf("FAIL: %s\n", uvpWhy(up));
+        uvpStop(up);
+        return FALSE;
+    }
+    while(uvpRunning(up) && (uc->uc_Frames < frames) && (ticks < limit) && !(SetSignal(0, 0) & SIGBREAKF_CTRL_C))
+    {
+        Delay(PREVIEW_POLL_TICKS);
+        ticks += PREVIEW_POLL_TICKS;
+        if(steps && (step < PREVIEW_STEPS) && uvpWindow(up) && (uc->uc_Frames >= (step + 1) * frames / (PREVIEW_STEPS + 1)))
+        {
+            stepWindow(uvpWindow(up), step++);
+            shownthen = uc->uc_Shown;
+        }
+    }
+
+    BOOL ran = uvpRunning(up);
+    BOOL preview = uvpWindow(up) != NULL;
+
+    uvpStop(up);
+    if(!ran)
+    {
+        Printf("FAIL: the stream ended: %s\n", uvpWhy(up));
+        return FALSE;
+    }
+    if(uc->uc_Frames < frames)
+    {
+        Printf("FAIL: only %ld frames came\n", uc->uc_Frames);
+        return FALSE;
+    }
+    if(!preview)
+    {
+        Printf("FAIL: no preview: %s\n", uvpWhy(up));
+        return FALSE;
+    }
+    if(steps && (uc->uc_Shown <= shownthen))
+    {
+        PutStr("FAIL: no picture after the window's last step\n");
+        return FALSE;
+    }
+    return previewCounts(uc);
+}
+
+/* Return how many sessions the first backend has open; ~0 if unknown */
+static ULONG openSessions(void)
+{
+    struct VCInfo info;
+
+    memset(&info, 0, sizeof(info));
+    info.Size = sizeof(info);
+    return (VideoCodecBase && !VC_GetBackendInfo(0, &info)) ? info.Sessions : ~0UL;
+}
+
+/* Start and stop a stream again and again: nothing may stay behind */
+static BOOL previewCycles(struct UvcPreview *up, const struct UsbVideoModeReq *uvq, ULONG cycles)
+{
+    ULONG before = AvailMem(MEMF_ANY);
+
+    for(ULONG cnt = 0; cnt < cycles; cnt++)
+    {
+        if(!previewStream(up, uvq, PREVIEW_CYCLE_FRAMES, FALSE, NULL))
+        {
+            Printf("in cycle %ld\n", cnt + 1);
+            return FALSE;
+        }
+    }
+
+    ULONG after = AvailMem(MEMF_ANY);
+    ULONG sessions = openSessions();
+
+    Printf("%ld cycles: %ld bytes free before, %ld after, %ld sessions open\n", cycles, before, after, sessions);
+    if(sessions)
+    {
+        PutStr("FAIL: a session stayed open\n");
+        return FALSE;
+    }
+    if((after < before) && (before - after > PREVIEW_MEMORY_SLACK))
+    {
+        PutStr("FAIL: memory stayed behind\n");
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/* The stream process of USBVideo: its own open of the unit, FRAMES through
+   the decoder, then the cycles. TRUE = PASS. */
+static BOOL testPreview(ULONG unit, const struct UsbVideoModeReq *uvq, ULONG frames, ULONG cycles, STRPTR stem)
+{
+    LONG sig = AllocSignal(-1);
+    UBYTE why[UVP_TEXT_SIZE];
+    BOOL ok = FALSE;
+
+    if(sig < 0)
+    {
+        return FALSE;
+    }
+
+    struct UvcPreview *up = uvpOpen(unit, 1UL << sig, 0, why);
+
+    if(up)
+    {
+        ok = previewStream(up, uvq, frames, TRUE, stem) && (!cycles || previewCycles(up, uvq, cycles));
+        uvpClose(up);
+    } else {
+        Printf("FAIL: %s\n", why);
+    }
+    FreeSignal(sig);
+    PutStr(ok ? "PASS\n" : "");
+    return ok;
+}
+
 /* Return the value of a /N argument, or none if it is absent */
 static ULONG numberArgument(ULONG arg, ULONG none)
 {
@@ -1683,6 +1859,23 @@ static BOOL runTest(struct UvcCamera *cm)
         CloseDevice((struct IORequest *) cm->cm_Request);
         cm->cm_Open = FALSE;
         return testVhiDriver(cm->cm_Unit, cm->cm_Modes, cm->cm_ModesSize, width, height, frames ? frames : 30, stem);
+    }
+    if(ArgsArray[ARGS_PREVIEW])
+    {
+        struct UsbVideoModeReq mode =
+        {
+            .uvq_FourCC = fourcc,
+            .uvq_Width = width,
+            .uvq_Height = height,
+            .uvq_Interval = fps ? UVC_INTERVAL_UNITS / fps : 0,
+            .uvq_BitRate = numberArgument(ARGS_BITRATE, 0),
+            .uvq_KeyInterval = numberArgument(ARGS_KEYFRAME, (fourcc == UVFCC_H264) ? UVP_KEY_INTERVAL : 0)
+        };
+
+        /* the stream process opens the unit itself: close ours */
+        CloseDevice((struct IORequest *) cm->cm_Request);
+        cm->cm_Open = FALSE;
+        return testPreview(cm->cm_Unit, &mode, frames ? frames : PREVIEW_FRAMES, cycles, stem);
     }
     if(ArgsArray[ARGS_CONTROLS] || ArgsArray[ARGS_EVENTS])
     {

@@ -9,7 +9,7 @@
 > the clock-driven iso hooks it relies on are in
 > [neptune-context-hcd-abi.md](neptune-context-hcd-abi.md) §10.3. Sources: `classes/video/`,
 > `include/devices/usb_video.h` (wire), `include/devices/usbvideodevice.h` (public), `vhi/`,
-> `tools/USBVideo.c`, `USBVideoTest.c`, `uvc_client.c`.
+> `tools/USBVideo.c`, `usbvideo_gui.c`, `USBVideoTest.c`, `uvc_client.c`, `uvc_preview.c`.
 >
 > This document describes structure, behaviour and the rules that keep it correct. It names
 > functions as anchors; the code is the reference for wire and field layouts, timings and retry
@@ -102,7 +102,7 @@ flowchart TB
 | **Transports** | Isochronous: RT-ISO hooks. Bulk: one pipe, one transfer in flight, payloads cut out of transfers | `uvc_iso.c`: `uvcInDoneHook`, `uvcIsoStart`; `uvc_bulk.c`: `uvcBulkTransfer`, `uvcBulkAsk`, `uvcBulkDone` |
 | **Device layer** | Open/close/`BeginIO`/`AbortIO`; read-only commands in the caller's context; forwarding | `dev.c`: `devOpen`, `devClose`, `devBeginIO`, `devAbortIO`, `nModeTable`, `nTopology` |
 | **Settings and persistence** | MUI window task (Picture, Camera, Mode pages); the two stored chunks and putting them in force | `usbvideo.gui.c`: `nGUITask`, `nGuiRequest`, `nGuiStore`; `UvcCfgChunk`, `nApplyConfig`, `nApplyStoredControls` |
-| **Clients** | VHI driver; the tools and what they share | `vhi/neptune.vhi.c`, `vhi/mjpegdht.h`, `tools/uvc_client.c` |
+| **Clients** | VHI driver; the tools and what they share | `vhi/neptune.vhi.c`, `vhi/mjpegdht.h`, `tools/uvc_client.c`, `tools/uvc_preview.c` |
 
 A unit (`NepVideoStream`) groups its changing state into sub-structures whose names say who may
 touch them: mode in force with the negotiated block (`ns_Mode`), the user's default mode
@@ -381,8 +381,9 @@ an event nobody waits for is lost. A failing endpoint is retried, then given up 
 
 ### 5.8 Settings window and persistence
 
-One window per camera (`usbvideo.gui.c`), opened from Neptune USB (`UCM_OpenBindingCfgWindow`),
-a task of its own; no class-wide window, no preview (a viewer runs beside it).
+One window per camera (`usbvideo.gui.c`), opened from Neptune USB (`UCM_OpenBindingCfgWindow`)
+or by a client of the device (`NSCMD_UV_SETTINGS`), a task of its own; no class-wide window, no
+preview (`USBVideo` is the viewer that runs beside it).
 
 - **A client of the subtask, not of the device**: the unit is held exclusively by whoever
   streams, so the window sends the device's control commands straight to the subtask's port
@@ -447,10 +448,48 @@ Details: [uvc/notes/vhi-notes.md](uvc/notes/vhi-notes.md).
 - **No decoder**: cAMIra takes `VHI_JPEG`. A camera without MJPEG gets YUY2 sorted into the planes
   of `VHI_YUV_422` without arithmetic (never run).
 
-**Tools**: `USBVideo` is the user tool (info, modes, frames or an H.264 stream to files); `USBVideoTest`
-is the test bench, built but not shipped (each test ends in PASS or FAIL). Both use
-`tools/uvc_client.c` (camera, capture loop, files) and `vhi/mjpegdht.h` (standard Huffman tables,
-frame checks).
+**Tools**: `USBVideo` is the user tool: in the Shell it gives info, modes, frames or an H.264 stream
+to files; from its icon or with `GUI` it is a MUI window (`tools/usbvideo_gui.c`, MUI opened at run
+time); with `PREVIEW` it shows the stream without MUI. `USBVideoTest` is the test bench, built but
+not shipped (each test ends in PASS or FAIL). Both use `tools/uvc_client.c` (camera, capture loop,
+reads, files), `tools/uvc_preview.c` (the stream process) and `vhi/mjpegdht.h` (standard Huffman
+tables, frame checks).
+
+**The stream process** (`tools/uvc_preview.c`) runs a camera for the tools: reads, decoder, preview
+window, files. Pixels stay out of the class; this is where they are. The reasons, because each
+guards a failure:
+
+- **A process of its own.** MUI blocks in the layer lock while a menu is held or a window dragged.
+  In the same task that would stop reads coming back, and each menu would be a hole in an H.264
+  stream and in a recording. Everything of the camera is made in that process, ports included, so
+  its signals are its own; the caller sends commands and reads counts.
+- **The buffers are the tool's, lent to the decoder** with `VC_ImportPacket()`. A read writes the
+  frame straight into one and the VPU reads it there (by SMEM when it is 512 KiB or more and in the
+  VPU's reach, else by bulk), with no copy on the 68k. So no read ever points into memory a session
+  frees, a failed session leaves the stream saving, and a stream without a decoder is the same stream.
+- **Stopping has one order:** `CMD_STOP`, reads taken back, session closed, buffers freed. The stop
+  comes first because an abort alone leaves the read being filled with a silent camera (rule 7).
+- **A flag per read says it is at the device** (`rd_AtDevice`); only then may it get `WaitIO()`
+  (the client contract in section 7). With a decoder several reads are off the device at once.
+- **Every port is emptied before each `Wait()`:** a `DoIO()` on the camera's request waits on the
+  same port and can eat the signal of a read that came meanwhile.
+- **MJPEG is not moved.** A frame is read 420 bytes into its buffer; a new SOI and either the
+  standard tables or a comment of that length overwrite the room and the frame's own SOI
+  (`uvcJpegFill`). Files are written before that, from the frame as it came. A frame with no
+  picture or no EOI does not reach the decoder.
+- **H.264 waits for a key frame** at the start and after any hole: what a decoder does with a stream
+  that starts between two is not known. The camera is asked for one once a second
+  (`UVCX_PICTURE_TYPE_CONTROL`), if it has the H.264 unit.
+- **Only the newest picture is drawn,** and only if `AttemptLockLayerRom()` gets the layer: a slow or
+  locked window costs pictures, never delay and never a read. A held menu does lock it on 3.2: over
+  3.4 s of one, 102 pictures went undrawn during an H.264 stream and no frame was lost. The session's
+  output follows the window's size; the size is compared first, as a call with the same size frees
+  nothing and the frames held would be lost.
+- **Priority 0 holds,** with Executive running: 1920x1080 H.264 lost no frame in a minute. A preview
+  at that size takes about 15 % of the 68k, in either format.
+- **The library must match.** The interface of `videocodec.library` is still moving under one version
+  number: the stream process reports a library of 26 Oct as having no decoder, and the stream runs
+  on without a picture.
 
 ---
 
@@ -523,8 +562,8 @@ Each rule exists because breaking it caused, or would cause, a real failure.
 - **in the caller's context, read-only**: info (identity, revision, transport, mode in force with
   buffer size and clock), the mode table (variable-length records per format and size, with an
   interval list or range), the topology table, the counts; and `CMD_FLUSH`;
-- **forwarded to the subtask** (they talk to the camera): set mode, `CMD_START`/`CMD_STOP`, raw
-  request, get/next/set control;
+- **forwarded to the subtask** (they talk to the camera, or start its window): set mode,
+  `CMD_START`/`CMD_STOP`, raw request, get/next/set control, open the settings window;
 - **queued until completed**: `CMD_READ` (by the transport), `NSCMD_UV_WAITEVENT` (by the
   subtask) - the only abortable commands.
 
@@ -588,7 +627,8 @@ older personality); makers' extension-unit controls in the window (raw requests 
   in its Neptune USB device settings; none is known.
 
 **Built, never run on hardware:** the frame-based, H.264 and VP8 rows (§5.1); the bulk transport
-(§5.4, tested on a PC against a simulated endpoint); the VHI driver's YUY2 path (§5.10).
+(§5.4, tested on a PC against a simulated endpoint); the VHI driver's YUY2 path (§5.10); the stream
+process, the `USBVideo` window and `NSCMD_UV_SETTINGS` (§5.10).
 
 Quirk-table candidates, should a camera need one: echo `dwMaxVideoFrameSize` in PROBE
 SET_CUR; `SET_INTERFACE(0)` before the first video request; compute an uncompressed payload size

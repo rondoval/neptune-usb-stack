@@ -36,8 +36,8 @@ The *host-controller driver* for your USB hardware is not included - see
   from the [Emu68 driver stack](https://github.com/rondoval/emu68-driver-stack) (PiStorm/Emu68
   on a Raspberry Pi 4 or CM4).
 - **Installer 43.3 or newer** (OS 3.5 and later have it; Aminet `util/misc/Installer-43_3.lha`).
-- **MUI 3.8 or newer** and a 640×480 screen, only for Neptune USB and the class settings
-  windows.
+- **MUI 3.8 or newer** and a 640×480 screen, only for Neptune USB, the class settings
+  windows and the USBVideo window.
 
 ## Talking to your USB hardware
 
@@ -161,6 +161,9 @@ Each is `DEVS:USBClasses/<name>.usbclass`.
   stops the drive and says when it is safe to unplug.
 - **Gadget tools** (optional, `SYS:Tools/`): `USBRadio`, `USBPencam`, `USBSonixcam`,
   `USBRocket`, `USBPowMan`, `USBUPS`, `USBVideo`.
+- **USBVideo** works in the Shell, or from its icon as a window: pick a camera and a mode,
+  save snapshots or video, and open the camera's settings. With `videocodec.library` (PiStorm
+  on a Raspberry Pi 4 or CM4) it shows the live picture of an MJPEG or H.264 mode.
 - **`neptune.vhi`** (optional, `LIBS:VHI/`) lets VHI programs such as cAMIra use USB webcams.
 
 ## Known limitations

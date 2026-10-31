@@ -18,8 +18,15 @@ foreach(t ${SHELLAPPS})
 endforeach()
 
 # uvc_client.c: what a client of usbvideo.device does (commands, mode list, reads, files).
+# uvc_preview.c: a camera run by a process of its own, with a preview window.
 # mjpegdht.h is the VHI driver's; the JPEG files saved are completed with it.
 foreach(t USBVideo USBVideoTest)
-    target_sources(${t} PRIVATE uvc_client.c)
+    target_sources(${t} PRIVATE uvc_client.c uvc_preview.c)
     target_include_directories(${t} PRIVATE ${CMAKE_SOURCE_DIR}/vhi)
 endforeach()
+
+# The window. MUI is opened at run time: USBVideo in the Shell runs without it.
+target_sources(USBVideo PRIVATE usbvideo_gui.c)
+set_source_files_properties(usbvideo_gui.c PROPERTIES
+    COMPILE_OPTIONS "-include;${CMAKE_SOURCE_DIR}/include/mui_compat.h")  # as NeptuneUSB
+target_link_libraries(USBVideo PRIVATE mui_headers -lamiga)  # DoMethod and the MUI vararg macros

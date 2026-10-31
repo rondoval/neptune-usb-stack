@@ -177,10 +177,11 @@
               "so your saved USB settings files show an icon instead of none. It relies on "
               "the DefIcons component, which is standard from AmigaOS 3.5 onwards; on 3.1 it "
               "is a separate install, and without it this is simply inert.\n\n"
-              "The gadget tools are small command-line utilities for specific USB devices: "
-              "USBRadio, USBPencam, USBPowMan, USBRocket, USBSonixcam, USBUPS and USBVideo "
-              "(for UVC devices). They go into SYS:Tools/; install them only if you own the "
-              "matching hardware.\n\n"
+              "The gadget tools are small utilities for specific USB devices: USBRadio, "
+              "USBPencam, USBPowMan, USBRocket, USBSonixcam, USBUPS and USBVideo (for UVC "
+              "devices, with a window and, where videocodec.library is installed, a live "
+              "picture). They go into SYS:Tools/; install them only if you own the matching "
+              "hardware.\n\n"
               "None of these is needed for the stack itself.")
         (choices "USBEject: safe-eject menu on Workbench"
                  "neptune.vhi: USB webcams in VHI programs"
@@ -250,13 +251,19 @@
 (if (in #extras 3)
     (
         (makedir "SYS:Tools" (prompt "Creating SYS:Tools") (help @makedir-help))
-        (foreach "Tools" "#?"
+        (foreach "Tools" "~(#?.info)"
             (copylib
                 (prompt "Installing " @each-name " into SYS:Tools/")
                 (help @copylib-help)
                 (source (tackon "Tools" @each-name))
                 (dest "SYS:Tools")
                 (confirm "expert")))
+        (copyfiles
+            (prompt "Installing the tools' icons into SYS:Tools/")
+            (help @copyfiles-help)
+            (source "Tools")
+            (dest "SYS:Tools")
+            (pattern "#?.info"))
     )
 )
 

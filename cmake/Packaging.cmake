@@ -101,6 +101,7 @@ endforeach()
 # USBVideoTest, the test bench of usbvideo.class, is built but not shipped.
 install(TARGETS USBRadio USBPencam USBPowMan USBRocket USBSonixcam USBUPS USBVideo
         RUNTIME DESTINATION Tools)
+install(FILES ${CMAKE_SOURCE_DIR}/dist/USBVideo.info DESTINATION Tools)  # it has a window
 
 # The VHI driver for USB video cameras - opt-in at install time; VHI applications look for
 # drivers in LIBS:VHI/, and the drawer mirrors that.

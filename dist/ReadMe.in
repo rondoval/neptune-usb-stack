@@ -24,8 +24,9 @@ REQUIREMENTS
 ------------
 
 Kickstart and Workbench 3.1 or newer, a 68020 or better, and MUI 3.8 or newer
-for Neptune USB and the per-class settings windows (the stack itself runs without
-MUI). You also need a USB host-controller driver - none ships here.
+for Neptune USB, the per-class settings windows and the USBVideo window (the stack
+itself runs without MUI). You also need a USB host-controller driver - none ships
+here.
 
 The Install script needs Installer 43.3 or newer, which is freely
 distributable and is on Aminet as util/misc/Installer-43_3.lha. OS 3.5 and

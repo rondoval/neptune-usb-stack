@@ -1107,6 +1107,11 @@ void nVideoTask()
                         ioreq->io_Error = uvcControlCommand(ncv, ioreq);
                         break;
 
+                    case NSCMD_UV_SETTINGS:
+                        nOpenBindingCfgWindow(ncv->ncv_ClsBase, ncv);
+                        ioreq->io_Error = ncv->ncv_GUITask ? 0 : IOERR_OPENFAIL;
+                        break;
+
                     case UVCMD_APPLY:
                     {
                         /* the settings window takes back what was done in it */

@@ -61,6 +61,7 @@
 #define NSCMD_UV_GETCONTROL  (NSCMD_USBVIDEO_BASE + 0x07) /* io_Data: struct UsbVideoControl, read and written */
 #define NSCMD_UV_NEXTCONTROL (NSCMD_USBVIDEO_BASE + 0x08) /* the same: the camera's next control after this one */
 #define NSCMD_UV_SETCONTROL  (NSCMD_USBVIDEO_BASE + 0x09) /* the same: uvc_Value goes to the camera */
+#define NSCMD_UV_SETTINGS    (NSCMD_USBVIDEO_BASE + 0x0a) /* opens the camera's settings window; no data */
 /* the block is NSCMD_USBVIDEO_BASE + 0x00..0x1f */
 
 /*
@@ -380,6 +381,15 @@ struct UsbVideoControl
 #define UVCF_GOVERNS     0x0400 /* an automatic mode: whether other controls can be set
                                    depends on it. Write it before them, and ask about them
                                    again when it was written */
+
+/*
+** NSCMD_UV_SETTINGS - the camera's settings window
+**     Opens the window Neptune USB opens for this camera, for a program that
+**     shows a picture and wants the controls beside it without keeping its
+**     own. It runs by itself and works while the stream does; the command
+**     does not wait for it. If it is open already, nothing changes.
+**     Errors:   IOERR_OPENFAIL - the window could not be started
+*/
 
 /*
 ** The controls. A value has the unit the USB video class gives it; where
