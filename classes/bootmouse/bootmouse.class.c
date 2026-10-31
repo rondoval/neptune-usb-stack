@@ -679,8 +679,10 @@ struct NepClassHid * nAllocHid(void)
                 {
                     nch->nch_InputBase = (struct Library *) nch->nch_InpIOReq->io_Device;
                     /* IND_ADDEVENT (V47) also drives input.device's own qualifier state,
-                       which is what the ROM boot menu samples for its both-buttons check. */
-                    nch->nch_InpCmd = (nch->nch_InputBase->lib_Version >= 47) ? IND_ADDEVENT : IND_WRITEEVENT;
+                       which is what the ROM boot menu samples for its both-buttons check.
+                       Only if the device lists it in its NSD query (nInputHasAddEvent,
+                       common.h): input.device 50.x is V50 but has another command 24. */
+                    nch->nch_InpCmd = nInputHasAddEvent(nch->nch_InpIOReq) ? IND_ADDEVENT : IND_WRITEEVENT;
                     if((nch->nch_TaskMsgPort = CreateMsgPort()))
                     {
                         if((nch->nch_EP0Pipe = psdAllocPipe(nch->nch_Device, nch->nch_TaskMsgPort, NULL)))

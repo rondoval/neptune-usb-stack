@@ -58,7 +58,8 @@ Open work lives in `docs/implementation-plan.md` only.
 
 - **Runtime floor is Kickstart/Workbench 3.1 (V40)** although the build uses NDK 3.2 headers: no
   OS call or `OpenLibrary` version above 40 without a deliberate runtime gate (the one existing
-  case: `IND_ADDEVENT`, V47, gated in `hid.class.c`). See `docs/porting-playbook.md` §5.
+  case: `IND_ADDEVENT`, V47, gated by `nInputHasAddEvent()` in `classes/common.h` on the device's
+  version and its `NSCMD_DEVICEQUERY` answer). See `docs/porting-playbook.md` §5.
 - **The legacy HCD ABI is frozen.** `IOUsbHWReq` V1+V2 layout and all `UHCMD_*`/`UHIOERR_*`/
   `UHFB_*`/`UHCF_*` values are binary contract with classic HCDs. Neptune does not implement
   Poseidon's V3 interface; new HCD capabilities go into the context ABI, never into the request.
