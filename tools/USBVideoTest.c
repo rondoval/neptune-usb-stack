@@ -109,30 +109,24 @@ static const char *template = "UNIT/N/K,PROBE/S,WIDTH/N/K,HEIGHT/N/K,FPS/N/K,FRA
 const char USBVideoTest_version[] = NEP_VER("USBVideoTest");
 static LONG ArgsArray[ARGS_SIZEOF];
 
-/* Set a mode (NSCMD_UV_SETMODE), print the negotiated mode and leave it in
-   uvq. bitrate and keyinterval are encoder requests, 0 = none; fail if one
-   is given and the mode's encoder ignores it. TRUE = negotiated. */
-static BOOL setMode(struct IOStdReq *ioreq, struct UsbVideoModeReq *uvq,
-                    ULONG fourcc, ULONG width, ULONG height, ULONG interval, ULONG bitrate, ULONG keyinterval)
+/* Set the mode asked for in uvq (NSCMD_UV_SETMODE), print the negotiated mode
+   and leave it in uvq. Its bit rate and key interval are encoder requests,
+   0 = none; fail if one is given and the mode's encoder ignores it.
+   TRUE = negotiated. */
+static BOOL setMode(struct IOStdReq *ioreq, struct UsbVideoModeReq *uvq)
 {
+    ULONG bitrate = uvq->uvq_BitRate;
+    ULONG keyinterval = uvq->uvq_KeyInterval;
     LONG err;
 
-    uvq->uvq_FourCC = fourcc;
-    uvq->uvq_Width = width;
-    uvq->uvq_Height = height;
-    uvq->uvq_Interval = interval;
     uvq->uvq_MaxFrameSize = 0;
-    uvq->uvq_BitRate = bitrate;
-    uvq->uvq_KeyInterval = keyinterval;
     if((err = uvcCommand(ioreq, NSCMD_UV_SETMODE, uvq, sizeof(*uvq))))
     {
         Printf("FAIL: %s (%ld)\n", uvcErrorText(err), err);
         return FALSE;
     }
     uvcPrintMode(uvq);
-    Printf(", frames up to %ld bytes", uvq->uvq_MaxFrameSize);
-    uvcPrintEncoder(uvq);
-    PutStr("\n");
+    Printf(", frames up to %ld bytes\n", uvq->uvq_MaxFrameSize);
     if((bitrate && !uvq->uvq_BitRate) || (keyinterval && !uvq->uvq_KeyInterval))
     {
         PutStr("FAIL: BITRATE and KEYFRAME are not for this mode: its encoder takes no such wish\n");
@@ -148,14 +142,12 @@ static BOOL probeModes(struct IOStdReq *ioreq, struct UsbVideoMode *table, ULONG
     ULONG passed = 0;
     ULONG failed = 0;
 
-    for(ULONG pos = 0; pos < tablesize; )
+    UVC_EACH_MODE(uvm, table, tablesize)
     {
-        struct UsbVideoMode *uvm = (struct UsbVideoMode *) ((UBYTE *) table + pos);
-
-        struct UsbVideoModeReq uvq;
+        struct UsbVideoModeReq uvq = { .uvq_FourCC = uvm->uvm_FourCC, .uvq_Width = uvm->uvm_Width, .uvq_Height = uvm->uvm_Height };
 
         Printf("  %ldx%ld: ", (ULONG) uvm->uvm_Width, (ULONG) uvm->uvm_Height);
-        if(setMode(ioreq, &uvq, uvm->uvm_FourCC, uvm->uvm_Width, uvm->uvm_Height, 0, 0, 0))
+        if(setMode(ioreq, &uvq))
         {
             passed++;
         } else {
@@ -165,7 +157,6 @@ static BOOL probeModes(struct IOStdReq *ioreq, struct UsbVideoMode *table, ULONG
         {
             break;
         }
-        pos += uvm->uvm_Size;
     }
     Printf("\n%ld modes negotiated, %ld failed: %s\n", passed, failed, (passed && !failed) ? "PASS" : "FAIL");
     return passed && !failed;
@@ -326,7 +317,7 @@ static BOOL captureFrames(struct UvcCamera *cm, struct UsbVideoModeReq *uvq, ULO
                 }
                 if(isstream)
                 {
-                    keyframes += uvcH264Key(jpeg, len) ? 1 : 0;
+                    keyframes += uvcH264Key(jpeg, len);
                 }
             }
             else if((len < 4) || (jpeg[0] != 0xff) || (jpeg[1] != 0xd8) ||
@@ -498,12 +489,7 @@ static BOOL captureFrames(struct UvcCamera *cm, struct UsbVideoModeReq *uvq, ULO
 static BOOL startStopCycles(struct UvcCamera *cm, struct UsbVideoModeReq *uvq, ULONG cycles, ULONG frames)
 {
     struct IOStdReq *ioreq = cm->cm_Request;
-    ULONG fourcc = uvq->uvq_FourCC;
-    ULONG width = uvq->uvq_Width;
-    ULONG height = uvq->uvq_Height;
-    ULONG interval = uvq->uvq_Interval;
-    ULONG bitrate = uvq->uvq_BitRate;
-    ULONG keyinterval = uvq->uvq_KeyInterval;
+    struct UsbVideoModeReq asked = *uvq;
     ULONG waited = 0;
     LONG err;
 
@@ -550,7 +536,8 @@ static BOOL startStopCycles(struct UvcCamera *cm, struct UsbVideoModeReq *uvq, U
         return FALSE;
     }
     PutStr("after that: ");
-    if(!setMode(ioreq, uvq, fourcc, width, height, interval, bitrate, keyinterval))
+    *uvq = asked;
+    if(!setMode(ioreq, uvq))
     {
         return FALSE;
     }
@@ -625,7 +612,7 @@ static BOOL completeJpegSize(const UBYTE *jpeg, ULONG len, ULONG *width, ULONG *
    MJPG) or three YUV planes, at the size VHI_CHECK_DIGITIZE_SIZE reported.
    Return the failure reason, NULL on success. */
 static STRPTR takeVhiPictures(struct Library *VHIBase, APTR handle, ULONG askwidth, ULONG askheight,
-                              struct UsbVideoMode *def, ULONG frames, STRPTR stem)
+                              const struct UsbVideoMode *def, ULONG frames, STRPTR stem)
 {
     BOOL isjpeg = (def->uvm_FourCC == UVFCC_MJPG);
     struct vhi_digitize dig;
@@ -754,26 +741,38 @@ static STRPTR takeVhiPictures(struct Library *VHIBase, APTR handle, ULONG askwid
 
 /* Open the driver, query it as a client does, check the sizes it offers
    against the mode table, grab pictures. TRUE = PASS. */
-static BOOL testVhiDriver(ULONG input, struct UsbVideoMode *table, ULONG tablesize,
+/* Return the mode with that FourCC and size, NULL if none; width = height
+   = 0 matches any size */
+static const struct UsbVideoMode *findMode(const struct UsbVideoMode *table, ULONG tablesize, ULONG fourcc, ULONG width, ULONG height)
+{
+    UVC_EACH_MODE(uvm, table, tablesize)
+    {
+        if((uvm->uvm_FourCC == fourcc) &&
+           (!(width || height) || ((uvm->uvm_Width == width) && (uvm->uvm_Height == height))))
+        {
+            return uvm;
+        }
+    }
+    return NULL;
+}
+
+static BOOL testVhiDriver(ULONG input, const struct UsbVideoMode *table, ULONG tablesize,
                           ULONG width, ULONG height, ULONG frames, STRPTR stem)
 {
     struct Library *VHIBase;
     struct vhi_size size = { 0, 0, FALSE, FALSE };
-    struct UsbVideoMode *smallest = NULL;
-    struct UsbVideoMode *largest = NULL;
-    struct UsbVideoMode *def = NULL;
+    const struct UsbVideoMode *smallest = NULL;
+    const struct UsbVideoMode *largest = NULL;
+    const struct UsbVideoMode *def = NULL;
     APTR handle;
     ULONG vhierr = 0;
     STRPTR why = NULL;
 
     /* the driver uses the MJPG modes, or YUY2 if the camera has no MJPG */
-    ULONG fourcc = uvcFindMode(table, tablesize, UVFCC_MJPG, 0, 0) ? UVFCC_MJPG : UVFCC_YUY2;
+    ULONG fourcc = findMode(table, tablesize, UVFCC_MJPG, 0, 0) ? UVFCC_MJPG : UVFCC_YUY2;
 
-    for(ULONG pos = 0; pos < tablesize; )
+    UVC_EACH_MODE(uvm, table, tablesize)
     {
-        struct UsbVideoMode *uvm = (struct UsbVideoMode *) ((UBYTE *) table + pos);
-
-        pos += uvm->uvm_Size;
         if(uvm->uvm_FourCC != fourcc)
         {
             continue;
@@ -854,12 +853,10 @@ static BOOL testVhiDriver(ULONG input, struct UsbVideoMode *table, ULONG tablesi
     }
 
     /* every mode size must be accepted unchanged, with a full-frame crop */
-    for(ULONG pos = 0; !why && (pos < tablesize); )
+    UVC_EACH_MODE(uvm, table, tablesize)
     {
-        struct UsbVideoMode *uvm = (struct UsbVideoMode *) ((UBYTE *) table + pos);
         struct vhi_dimensions dim = { 5, 5, 9, 9, uvm->uvm_Width, uvm->uvm_Height };
 
-        pos += uvm->uvm_Size;
         if(uvm->uvm_FourCC != fourcc)
         {
             continue;
@@ -872,6 +869,7 @@ static BOOL testVhiDriver(ULONG input, struct UsbVideoMode *table, ULONG tablesi
                    (ULONG) uvm->uvm_Width, (ULONG) uvm->uvm_Height, vhierr,
                    dim.x1, dim.y1, dim.x2, dim.y2, dim.dst_width, dim.dst_height);
             why = "a picture size of the camera was not offered as it is";
+            break;
         }
     }
 
@@ -885,7 +883,7 @@ static BOOL testVhiDriver(ULONG input, struct UsbVideoMode *table, ULONG tablesi
         vhi_api(VHI_METHOD_PERFORM, VHI_CHECK_DIGITIZE_SIZE, &dim, &vhierr, handle);
         Printf("%ldx%ld asked gives %ldx%ld\n", (ULONG) asked[cnt][0], (ULONG) asked[cnt][1],
                dim.dst_width, dim.dst_height);
-        if(vhierr || (asked[cnt][0] ? !uvcFindMode(table, tablesize, fourcc, dim.dst_width, dim.dst_height)
+        if(vhierr || (asked[cnt][0] ? !findMode(table, tablesize, fourcc, dim.dst_width, dim.dst_height)
                                     : (dim.dst_width || dim.dst_height)))
         {
             why = "a size was answered with one the camera does not have";
@@ -937,26 +935,6 @@ static STRPTR reasonText(ULONG code)
         case UVREC_INVALID_VALUE:   return ", the camera says: invalid value";
     }
     return ", the camera gives no reason";
-}
-
-/* Send a raw class request to an entity (NSCMD_UV_REQUEST), for controls
-   the device has no name for. Return io_Error; *reason receives the
-   camera's request error code. */
-static LONG classRequest(struct IOStdReq *ioreq, ULONG request, ULONG entity, ULONG selector,
-                         APTR data, ULONG len, UBYTE *reason)
-{
-    struct UsbVideoRequest uvr;
-
-    uvr.uvr_Request = request;
-    uvr.uvr_Entity = entity;
-    uvr.uvr_Selector = selector;
-    uvr.uvr_ErrorCode = UVREC_NO_ERROR;
-    uvr.uvr_Length = len;
-    uvr.uvr_Actual = 0;
-    uvr.uvr_Data = data;
-    LONG err = uvcCommand(ioreq, NSCMD_UV_REQUEST, &uvr, sizeof(uvr));
-    *reason = uvr.uvr_ErrorCode;
-    return err;
 }
 
 /* Enumerate the named controls (NSCMD_UV_NEXTCONTROL) into list. Return the
@@ -1154,8 +1132,8 @@ static BOOL printTopology(struct IOStdReq *ioreq, struct UsbVideoInfo *uvi,
             }
             /* vendor controls: only length and capabilities can be queried */
             Printf("  selector %ld: ", bit + 1);
-            if(classRequest(ioreq, UVUDR_GET_LEN, uve->uve_ID, bit + 1, &lendata, sizeof(lendata), &reason) ||
-               classRequest(ioreq, UVUDR_GET_INFO, uve->uve_ID, bit + 1, &info, 1, &reason))
+            if(uvcRequest(ioreq, UVUDR_GET_LEN, uve->uve_ID, bit + 1, &lendata, sizeof(lendata), &reason) ||
+               uvcRequest(ioreq, UVUDR_GET_INFO, uve->uve_ID, bit + 1, &info, 1, &reason))
             {
                 Printf("no answer%s\n", reasonText(reason));
                 (*missing)++;
@@ -1626,14 +1604,14 @@ static BOOL testControlsAndEvents(struct IOStdReq *ioreq, struct MsgPort *port, 
         }
         if(ArgsArray[ARGS_EVENTS])
         {
-            struct UsbVideoModeReq uvq;
+            struct UsbVideoModeReq uvq = { .uvq_FourCC = 0 };
 
             if(!(uvi->uvi_Flags & UVIF_EVENTS))
             {
                 PutStr("The camera has no status endpoint: it reports nothing by itself.\n");
             }
             /* stream in the default mode; no reads queued, frames are dropped */
-            else if(!setMode(ioreq, &uvq, 0, 0, 0, 0, 0, 0))
+            else if(!setMode(ioreq, &uvq))
             {
                 ok = FALSE;
             }
@@ -1812,16 +1790,9 @@ static BOOL previewCycles(struct UvcPreview *up, const struct UsbVideoModeReq *u
    the decoder, then the cycles. TRUE = PASS. */
 static BOOL testPreview(ULONG unit, const struct UsbVideoModeReq *uvq, ULONG frames, ULONG cycles, STRPTR stem)
 {
-    LONG sig = AllocSignal(-1);
-    UBYTE why[UVP_TEXT_SIZE];
+    UBYTE why[UVC_TEXT_SIZE];
     BOOL ok = FALSE;
-
-    if(sig < 0)
-    {
-        return FALSE;
-    }
-
-    struct UvcPreview *up = uvpOpen(unit, 1UL << sig, 0, why);
+    struct UvcPreview *up = uvpOpen(unit, 0, 0, why);
 
     if(up)
     {
@@ -1830,7 +1801,6 @@ static BOOL testPreview(ULONG unit, const struct UsbVideoModeReq *uvq, ULONG fra
     } else {
         Printf("FAIL: %s\n", why);
     }
-    FreeSignal(sig);
     PutStr(ok ? "PASS\n" : "");
     return ok;
 }
@@ -1852,30 +1822,30 @@ static BOOL runTest(struct UvcCamera *cm)
     ULONG cycles = numberArgument(ARGS_CYCLES, 0);
     ULONG fourcc = uvcParseFourCC((STRPTR) ArgsArray[ARGS_FORMAT]);
     STRPTR stem = (STRPTR) ArgsArray[ARGS_TO];
+    BOOL preview = ArgsArray[ARGS_PREVIEW] != 0;
+    struct UsbVideoModeReq uvq =
+    {
+        .uvq_FourCC = fourcc,
+        .uvq_Width = width,
+        .uvq_Height = height,
+        .uvq_Interval = fps ? UVC_INTERVAL_UNITS / fps : 0,
+        .uvq_BitRate = numberArgument(ARGS_BITRATE, 0),
+        .uvq_KeyInterval = numberArgument(ARGS_KEYFRAME, (preview && (fourcc == UVFCC_H264)) ? UVP_KEY_INTERVAL : 0)
+    };
 
+    if(ArgsArray[ARGS_VHI] || preview)
+    {
+        /* the driver or the stream process opens the unit itself: close ours */
+        CloseDevice((struct IORequest *) cm->cm_Request);
+        cm->cm_Open = FALSE;
+    }
     if(ArgsArray[ARGS_VHI])
     {
-        /* the driver opens the unit itself: close ours */
-        CloseDevice((struct IORequest *) cm->cm_Request);
-        cm->cm_Open = FALSE;
         return testVhiDriver(cm->cm_Unit, cm->cm_Modes, cm->cm_ModesSize, width, height, frames ? frames : 30, stem);
     }
-    if(ArgsArray[ARGS_PREVIEW])
+    if(preview)
     {
-        struct UsbVideoModeReq mode =
-        {
-            .uvq_FourCC = fourcc,
-            .uvq_Width = width,
-            .uvq_Height = height,
-            .uvq_Interval = fps ? UVC_INTERVAL_UNITS / fps : 0,
-            .uvq_BitRate = numberArgument(ARGS_BITRATE, 0),
-            .uvq_KeyInterval = numberArgument(ARGS_KEYFRAME, (fourcc == UVFCC_H264) ? UVP_KEY_INTERVAL : 0)
-        };
-
-        /* the stream process opens the unit itself: close ours */
-        CloseDevice((struct IORequest *) cm->cm_Request);
-        cm->cm_Open = FALSE;
-        return testPreview(cm->cm_Unit, &mode, frames ? frames : PREVIEW_FRAMES, cycles, stem);
+        return testPreview(cm->cm_Unit, &uvq, frames ? frames : PREVIEW_FRAMES, cycles, stem);
     }
     if(ArgsArray[ARGS_CONTROLS] || ArgsArray[ARGS_EVENTS])
     {
@@ -1891,10 +1861,7 @@ static BOOL runTest(struct UvcCamera *cm)
         return TRUE;
     }
 
-    struct UsbVideoModeReq uvq;
-
-    if(!setMode(cm->cm_Request, &uvq, fourcc, width, height, fps ? UVC_INTERVAL_UNITS / fps : 0,
-                numberArgument(ARGS_BITRATE, 0), numberArgument(ARGS_KEYFRAME, 0)))
+    if(!setMode(cm->cm_Request, &uvq))
     {
         return FALSE;
     }

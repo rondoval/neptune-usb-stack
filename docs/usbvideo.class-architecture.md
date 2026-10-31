@@ -477,9 +477,10 @@ guards a failure:
   standard tables or a comment of that length overwrite the room and the frame's own SOI
   (`uvcJpegFill`). Files are written before that, from the frame as it came. A frame with no
   picture or no EOI does not reach the decoder.
-- **H.264 waits for a key frame** at the start and after any hole: what a decoder does with a stream
-  that starts between two is not known. The camera is asked for one once a second
-  (`UVCX_PICTURE_TYPE_CONTROL`), if it has the H.264 unit.
+- **H.264 goes straight to the decoder.** It gives nothing until its first key frame, by itself.
+  After a hole its pictures are rubbish until the next one, so the first frame after a hole asks the
+  camera for a key frame (`UVCX_PICTURE_TYPE_CONTROL`), if it has the H.264 unit; the C930e sends it
+  two frames later, whatever its key interval.
 - **Only the newest picture is drawn,** and only if `AttemptLockLayerRom()` gets the layer: a slow or
   locked window costs pictures, never delay and never a read. A held menu does lock it on 3.2: over
   3.4 s of one, 102 pictures went undrawn during an H.264 stream and no frame was lost. The session's
