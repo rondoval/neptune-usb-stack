@@ -1158,21 +1158,25 @@ struct NepClassHid * nAllocHid(void)
                     /* IND_ADDEVENT is V47 (AmigaOS 3.2). It differs from IND_WRITEEVENT only in
                        nudging input.device's own state machine, which is what lets a held key
                        auto-repeat. On anything older the command does not exist at all and every
-                       event sent with it would be dropped with IOERR_NOCMD -- so below V47 we send
-                       everything with IND_WRITEEVENT, exactly as the boot mouse/keyboard classes
-                       always have, and lose only the repeat. */
-                    nch->nch_OS4Hack = (InputBase->lib_Version >= 47);
+                       event sent with it would be dropped with IOERR_NOCMD; on the 68k
+                       input.device 50.x the same number is another command, and a key sent
+                       with it never stops repeating. So it is used only when the device lists
+                       it in its NSCMD_DEVICEQUERY answer (nInputHasAddEvent, common.h); otherwise
+                       everything goes with IND_WRITEEVENT, exactly as the boot mouse/keyboard
+                       classes always have, and only the repeat is lost. */
+                    nch->nch_OS4Hack = nInputHasAddEvent(nch->nch_InpIOReq);
                     nch->nch_ClsBase->nh_OS4Hack = nch->nch_OS4Hack;
                     if(nch->nch_OS4Hack)
                     {
                         psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
-                                       "input.device is V47, using IND_ADDEVENT: held keys repeat "
-                                       "and the input state follows USB input.");
+                                       "input.device V%ld.%ld supports IND_ADDEVENT: held keys repeat "
+                                       "and the input state follows USB input.",
+                                       (ULONG) InputBase->lib_Version, (ULONG) InputBase->lib_Revision);
                     } else {
                         psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
-                                       "input.device is V%ld (pre-3.2), using IND_WRITEEVENT. Keys and "
+                                       "input.device V%ld.%ld has no IND_ADDEVENT, using IND_WRITEEVENT. Keys and "
                                        "mouse work, but held keys will not auto-repeat.",
-                                       (ULONG) InputBase->lib_Version);
+                                       (ULONG) InputBase->lib_Version, (ULONG) InputBase->lib_Revision);
                     }
 
                     if((nch->nch_TaskMsgPort = CreateMsgPort()))
