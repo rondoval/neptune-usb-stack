@@ -173,9 +173,8 @@ interface once in the MIDI Ports editor.
 * **USB network adapters** (asixeth, davicometh, ethwrap, lan78xx, moschipeth, pegasuseth,
   rndis): fixed packet corruption or crashes, refused station addresses, and a send that
   could hang the program.
-* **USB keyboards with `input.device` 50.x** (the 2003 68k one, version 50.26, found in some
-  custom Kickstarts): a key pressed once no longer repeats for ever. The classes now use the
-  3.2 `input.device` command only when the device reports that it has it.
+* **USB keyboards on `input.device` 50.x** (some custom Kickstarts): a key pressed once no
+  longer repeats for ever.
 * **Flushing memory** (`Avail FLUSH`) with no USB device in use no longer hangs or resets the
   machine.
 

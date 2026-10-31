@@ -1162,8 +1162,7 @@ struct NepClassHid * nAllocHid(void)
                        input.device 50.x the same number is another command, and a key sent
                        with it never stops repeating. So it is used only when the device lists
                        it in its NSCMD_DEVICEQUERY answer (nInputHasAddEvent, common.h); otherwise
-                       everything goes with IND_WRITEEVENT, exactly as the boot mouse/keyboard
-                       classes always have, and only the repeat is lost. */
+                       everything goes with IND_WRITEEVENT and at most the repeat is lost. */
                     nch->nch_OS4Hack = nInputHasAddEvent(nch->nch_InpIOReq);
                     nch->nch_ClsBase->nh_OS4Hack = nch->nch_OS4Hack;
                     if(nch->nch_OS4Hack)
@@ -1175,7 +1174,7 @@ struct NepClassHid * nAllocHid(void)
                     } else {
                         psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
                                        "input.device V%ld.%ld has no IND_ADDEVENT, using IND_WRITEEVENT. Keys and "
-                                       "mouse work, but held keys will not auto-repeat.",
+                                       "mouse work, but held keys may not auto-repeat.",
                                        (ULONG) InputBase->lib_Version, (ULONG) InputBase->lib_Revision);
                     }
 
@@ -6558,7 +6557,7 @@ void nSendRawKeyCmd(struct NepClassHid *nch, UWORD key, UWORD cmd)
 /* \\\ */
 
 /* /// "nSendRawKey()" */
-/* A key edge. IND_ADDEVENT on V47 so input.device tracks it (qualifier state,
+/* A key edge. IND_ADDEVENT if it has it, so input.device tracks it (qualifier state,
    auto-repeat until the matching up arrives). nch_LastRawKey is what nCheckReset
    reads: the event itself is destroyed by the DoIO (input.doc). */
 void nSendRawKey(struct NepClassHid *nch, UWORD key)

@@ -203,7 +203,7 @@ updating `input.device`'s state, which makes a held key auto-repeat. `nAllocHid`
 device once, with `nInputHasAddEvent()` (`classes/common.h`; `bootkeyboard` and `bootmouse` use the
 same helper): `lib_Version >= 47` **and** `IND_ADDEVENT` listed in its `NSCMD_DEVICEQUERY` answer.
 The result goes to `nch_OS4Hack`, copied to `nh_OS4Hack` for the dispatcher, and is logged with the
-device's version (rule 2). Without it only the repeat is lost; the class tracks qualifiers itself.
+device's version (rule 2). Without it at most the repeat is lost; the class tracks qualifiers itself.
 Gated: key edges (`nSendRawKey`), relative mouse, buttons 1-3, key strings. Always
 `IND_WRITEEVENT`: the wheel (rule 3), absolute/tablet events, the NewMouse button event, close-window.
 

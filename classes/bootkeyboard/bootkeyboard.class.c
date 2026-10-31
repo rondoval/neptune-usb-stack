@@ -863,7 +863,6 @@ struct NepClassHid * bootkbd_AllocHid(void)
             {
                 if(!OpenDevice("input.device", 0, (struct IORequest *) nch->nch_InpIOReq, 0))
                 {
-                    nch->nch_InputBase = (struct Library *) nch->nch_InpIOReq->io_Device;
                     /* IND_ADDEVENT (V47) also drives input.device's own qualifier state,
                        which is what the ROM boot menu samples (ALT = debug boot shell),
                        and gives held keys input.device's own repeat.

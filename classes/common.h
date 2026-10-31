@@ -76,26 +76,26 @@ static inline void nApplyInputTaskPriFloor(void)
     }
 }
 
-/* TRUE if the input.device behind ioreq (just opened, idle) implements
-   IND_ADDEVENT, the V47 (AmigaOS 3.2) command. Asks the device itself with
-   NSCMD_DEVICEQUERY instead of trusting lib_Version alone: the 68k
-   input.device 50.x is V50 but does not answer the query, and its command
-   24 (CMD_NONSTD+15) is a different function - fed key events with it, a key
-   repeats for ever. The 3.2 input.device (47.1) answers and lists 24.
-   Below V47 the query is not even sent. Leaves io_Command/io_Data/io_Length
-   changed; every sender sets all three before its DoIO. */
+/**
+ * nInputHasAddEvent() - Test whether input.device implements IND_ADDEVENT.
+ * @ioreq: request on the opened device, idle. Its io_Command, io_Data and io_Length
+ *         are left changed; every sender sets all three before its DoIO().
+ *
+ * Asks NSCMD_DEVICEQUERY rather than trusting lib_Version: the 68k input.device 50.x
+ * is V50 but rejects the query, and its command 24 (CMD_NONSTD+15) is another function
+ * with which a key repeats for ever. Below V47 the query is not sent.
+ *
+ * Return: TRUE if the device lists IND_ADDEVENT.
+ */
 static inline BOOL nInputHasAddEvent(struct IOStdReq *ioreq)
 {
-    struct NSDeviceQueryResult nsdq;
-    UWORD *cmd;
-
     if(ioreq->io_Device->dd_Library.lib_Version < 47)
     {
-        return(FALSE);
+        return FALSE;
     }
-    nsdq.nsdqr_DevQueryFormat = 0;
-    nsdq.nsdqr_SizeAvailable = 0;
-    nsdq.nsdqr_SupportedCommands = NULL;
+
+    struct NSDeviceQueryResult nsdq = { 0 };
+
     ioreq->io_Command = NSCMD_DEVICEQUERY;
     ioreq->io_Data = &nsdq;
     ioreq->io_Length = sizeof(nsdq);
@@ -103,16 +103,16 @@ static inline BOOL nInputHasAddEvent(struct IOStdReq *ioreq)
     if(DoIO((struct IORequest *) ioreq) || (ioreq->io_Actual < sizeof(nsdq)) ||
        (nsdq.nsdqr_SizeAvailable < sizeof(nsdq)) || !nsdq.nsdqr_SupportedCommands)
     {
-        return(FALSE);
+        return FALSE;
     }
-    for(cmd = (UWORD *) nsdq.nsdqr_SupportedCommands; *cmd; cmd++)
+    for(const UWORD *cmd = nsdq.nsdqr_SupportedCommands; *cmd; cmd++)
     {
         if(*cmd == IND_ADDEVENT)
         {
-            return(TRUE);
+            return TRUE;
         }
     }
-    return(FALSE);
+    return FALSE;
 }
 
 /* SANA-II buffer management copy hook (S2_CopyToBuff/S2_CopyFromBuff):
