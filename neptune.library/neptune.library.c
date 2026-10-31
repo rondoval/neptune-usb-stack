@@ -192,6 +192,15 @@ int libExpunge(struct PsdBase * ps)
     struct PsdErrorMsg *pem = (struct PsdErrorMsg *) ps->ps_ErrorMsgs.lh_Head;
     struct PsdIFFContext *pic = (struct PsdIFFContext *) ps->ps_ConfigRoot.lh_Head;
     KPRINTF(10, ("libExpunge ps: 0x%08lx\n", ps));
+
+    /* The event task runs from the first libOpen() on and starts the notifier.
+       Stopping either takes a Wait(), and exec calls Expunge under Forbid(): that
+       hung or reset the machine on Avail FLUSH. So a library with its tasks up
+       stays until reset. */
+    if(ps->ps_EventHandler.ph_Task || ps->ps_Notify.nt_Task) {
+        return FALSE;
+    }
+
     while(phw->phw_Node.ln_Succ) {
         psdRemHardware(phw);
         phw = (struct PsdHardware *) ps->ps_Hardware.lh_Head;
@@ -210,26 +219,6 @@ int libExpunge(struct PsdBase * ps)
         pic = (struct PsdIFFContext *) ps->ps_ConfigRoot.lh_Head;
     }
 
-    if(ps->ps_Notify.nt_Task) {
-        ps->ps_Notify.nt_ReadySignal = SIGB_SINGLE;
-        ps->ps_Notify.nt_ReadySigTask = FindTask(NULL);
-        Signal(ps->ps_Notify.nt_Task, SIGBREAKF_CTRL_C);
-        while(ps->ps_Notify.nt_Task) {
-            Wait(1L<<ps->ps_Notify.nt_ReadySignal);
-        }
-        ps->ps_Notify.nt_ReadySigTask = NULL;
-        //FreeSignal(ps->ps_Notify.nt_ReadySignal);
-    }
-    if(ps->ps_EventHandler.ph_Task) {
-        ps->ps_EventHandler.ph_ReadySignal = SIGB_SINGLE;
-        ps->ps_EventHandler.ph_ReadySigTask = FindTask(NULL);
-        Signal(ps->ps_EventHandler.ph_Task, SIGBREAKF_CTRL_C);
-        while(ps->ps_EventHandler.ph_Task) {
-            Wait(1L<<ps->ps_EventHandler.ph_ReadySignal);
-        }
-        ps->ps_EventHandler.ph_ReadySigTask = NULL;
-        //FreeSignal(ps->ps_EventHandler.ph_ReadySignal);
-    }
     psdFreeVec(ps->ps_Notify.nt_InsertSndFile);
     psdFreeVec(ps->ps_Notify.nt_RemoveSndFile);
     pGarbageCollectEvents(ps);

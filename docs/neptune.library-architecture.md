@@ -659,8 +659,9 @@ and Power-cycle Port, if it has a port.
   hook.
 - **`psdRemClass`** unlinks the class, releases its bindings, and closes the library only if its use
   count reached zero; otherwise it leaks the class rather than close a library still in use.
-- **`libExpunge`** removes hardware, classes, log and settings, stops the notifier and the event
-  task, and frees the pools.
+- **`libExpunge`** refuses while the event task or the notifier runs (rule 19), so the library
+  stays until reset once opened. If the event task never started, it removes hardware, classes,
+  log and settings and frees the pools.
 
 ---
 
@@ -730,6 +731,9 @@ Each rule exists because breaking it caused, or would cause, a real failure.
     devices with open pipes both end after a bounded wait.
 18. **The custom lock wakes every waiter on every full release.** A waiter may already hold a shared
     lock on the same lock; waking only at count zero hangs it.
+19. **Expunge never waits.** Exec calls it under `Forbid()`, and stopping the library's own tasks
+    takes a `Wait()`; doing that hung or reset the machine on `Avail FLUSH`. So `libExpunge` refuses
+    while they run, and its result counts.
 
 ---
 

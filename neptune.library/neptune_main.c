@@ -68,15 +68,21 @@ struct PsdBase *LibOpen(struct PsdBase *base asm("a6"))
     return base;
 }
 
+/**
+ * LibExpunge() - Free the library, or defer while it cannot go.
+ * @base: library base (A6)
+ *
+ * libExpunge() tears down and Remove()s the lib node, or refuses with nothing torn down.
+ *
+ * Return: the seglist for exec to unload, 0 if the library stays.
+ */
 BPTR LibExpunge(struct PsdBase *base asm("a6"))
 {
-    BPTR seglist;
-    if(base->ps_Library.lib_OpenCnt > 0) {
+    if(base->ps_Library.lib_OpenCnt > 0 || !libExpunge(base)) {
         base->ps_Library.lib_Flags |= LIBF_DELEXP;
         return 0;
     }
-    seglist = base->ps_SegList;
-    libExpunge(base);                 /* tears down + Remove()s the lib node */
+    BPTR seglist = base->ps_SegList;
     freeBase(base);
     return seglist;
 }
