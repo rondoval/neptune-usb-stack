@@ -88,7 +88,7 @@ Neptune is an incompatible fork:
 
 ## Download and install
 
-Take the archive for your CPU from the [Releases](https://github.com/rondoval/neptune/releases)
+Take the archive for your CPU from the [Releases](https://github.com/rondoval/neptune-usb-stack/releases)
 page:
 
 | Archive | For |

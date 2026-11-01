@@ -169,14 +169,15 @@ interface once in the MIDI Ports editor.
 * **USB audio:** webcam microphones now offer input gain; a second program can no longer
   open a device already in use; unplugging no longer leaks memory.
 * **Standard USB network devices** (cdceth, CDC ECM/NCM) now pass traffic, including
-  multicast; NCM no longer drops packets under load.
+  multicast; NCM no longer drops packets under load. The cdceth fixes were contributed by
+  Maxime Vincent.
 * **USB network adapters** (asixeth, davicometh, ethwrap, lan78xx, moschipeth, pegasuseth,
   rndis): fixed packet corruption or crashes, refused station addresses, and a send that
   could hang the program.
 * **USB keyboards on `input.device` 50.x** (some custom Kickstarts): a key pressed once no
-  longer repeats for ever.
+  longer repeats for ever. Contributed by pcotter72.
 * **Flushing memory** (`Avail FLUSH`) with no USB device in use no longer hangs or resets the
-  machine.
+  machine. Contributed by pcotter72.
 
 # Release notes - Neptune 6.2 (released as Poseidon for AmigaOS 6.2)
 
