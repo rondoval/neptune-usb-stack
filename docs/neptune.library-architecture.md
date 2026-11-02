@@ -298,6 +298,8 @@ has allocated, placed (parent, port, speed) and reset, or in `psdEnumerateHardwa
 - **Alternate settings** (`psdSetAltInterface`): the backend exchanges the endpoint sets, then
   `SET_INTERFACE` is sent and checked with `GET_INTERFACE`. If the switch does not take, the backend
   is called again with the alternates swapped back, so controller and model agree on the endpoints.
+  A `GET_INTERFACE` answered with no data leaves an acknowledged `SET_INTERFACE` standing (some hubs
+  do that); after a stalled one it counts as not switched.
 
 ### 5.4 Connect and disconnect
 

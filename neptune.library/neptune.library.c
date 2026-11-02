@@ -2046,14 +2046,33 @@ BOOL (psdSetAltInterface)(struct PsdPipe * pp asm("a1"), struct PsdInterface * p
         ioerr = 0;
     }
     if((!ioerr) || (ioerr == UHIOERR_STALL)) {
+        LONG setioerr = ioerr;
+        BOOL nodata = FALSE;
         if(pp) {
             psdPipeSetup(pp, URTF_IN|URTF_STANDARD|URTF_INTERFACE,
                          USR_GET_INTERFACE, 0, ifnum);
             ioerr = psdDoPipe(pp, buf, 1);
+            /* a short control read is no error: the reply had no byte to compare */
+            nodata = (!ioerr) && (!psdGetPipeActual(pp));
         } else {
             buf[0] = altnum;
         }
-        if(!ioerr) {
+        if(nodata && (!setioerr)) {
+            /* The readback only confirms an acknowledged SET_INTERFACE, and some
+               devices answer it with no data (the WCH 1A86:809D hub): the
+               acknowledgement stands. */
+            psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
+                           "GET_INTERFACE(%ld) returned no data; taking the acknowledged switch to alt %ld.",
+                           ifnum, altnum);
+            buf[0] = altnum;
+            nodata = FALSE;
+        }
+        if(nodata) {
+            /* after a stalled SET_INTERFACE nothing says the device switched */
+            psdAddErrorMsg(RETURN_WARN, (STRPTR) libname,
+                           "GET_INTERFACE(%ld) after the switch to alt %ld returned no data.",
+                           ifnum, altnum);
+        } else if(!ioerr) {
             if(altnum == buf[0]) {
                 KPRINTF(1, ("resorting list..."));
                 /*psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
