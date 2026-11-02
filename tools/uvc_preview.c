@@ -60,7 +60,6 @@ enum
     UVPC_START,
     UVPC_STOP,
     UVPC_RECORD,
-    UVPC_SNAPSHOT,
     UVPC_SETTINGS,
     UVPC_QUIT
 };
@@ -104,7 +103,6 @@ struct UvcPreview
     /* saving */
     BOOL  up_Recording;
     BOOL  up_RecordWaits; /* for a key frame */
-    BOOL  up_Snapshot;
     ULONG up_KeyAsked;    /* times a key frame was wanted since the last one came */
 
     /* the decoder */
@@ -679,7 +677,6 @@ static void stopStream(struct UvcPreview *up)
     closePreview(up);
     uvcStopCapture(&up->up_Capture);
     up->up_Recording = FALSE;
-    up->up_Snapshot = FALSE;
 }
 
 /* Set the mode, get the reads ready, preview if there can be one, start.
@@ -732,13 +729,13 @@ static BOOL startStream(struct UvcPreview *up, const struct UsbVideoModeReq *uvq
     return ok;
 }
 
-/* Keep a frame in a file, if one is wanted */
-static void saveFrame(struct UvcPreview *up, const struct UvcRead *rd, BOOL key)
+/* Record a frame, if a recording runs */
+static void recordFrame(struct UvcPreview *up, const struct UvcRead *rd, BOOL key)
 {
     struct UvcCapture *cp = &up->up_Capture;
     const struct IOVideoReq *ivr = rd->rd_Req;
 
-    if(!up->up_Recording && !up->up_Snapshot)
+    if(!up->up_Recording)
     {
         return;
     }
@@ -751,18 +748,17 @@ static void saveFrame(struct UvcPreview *up, const struct UvcRead *rd, BOOL key)
         }
         up->up_RecordWaits = FALSE;
     }
-    if(uvcWriteFrame(&cp->cp_Files, ivr->ivr_Std.io_Data, ivr->ivr_Std.io_Actual))
+    if(uvcRecordFrame(&cp->cp_Recording, ivr))
     {
-        up->up_Snapshot = FALSE;
-        up->up_Counts.uc_Saved = cp->cp_Files.fl_Saved;
+        up->up_Counts.uc_Saved = cp->cp_Recording.rc_Saved;
         return;
     }
     up->up_Recording = FALSE;
-    up->up_Snapshot = FALSE;
+    uvcStopRecording(&cp->cp_Recording);
     tellCaller(up);
 }
 
-/* A read came back with a frame: save it, decode it */
+/* A read came back with a frame: record it, decode it */
 static void frameIn(struct UvcPreview *up, struct UvcRead *rd)
 {
     struct UvcCapture *cp = &up->up_Capture;
@@ -788,7 +784,7 @@ static void frameIn(struct UvcPreview *up, struct UvcRead *rd)
         askKeyFrame(up); /* after a hole the decoder gives rubbish until one comes */
     }
     uc->uc_Lost = lost;
-    saveFrame(up, rd, key);
+    recordFrame(up, rd, key);
     if((!up->up_Session || !sendFrame(up, rd)) && !rd->rd_AtDevice)
     {
         uvcSendRead(rd);
@@ -888,19 +884,6 @@ static void serveWindow(struct UvcPreview *up)
     }
 }
 
-/* Open the files of this stream, if they are not */
-static BOOL openOutput(struct UvcPreview *up)
-{
-    struct UvcCapture *cp = &up->up_Capture;
-
-    if(!up->up_Stem[0])
-    {
-        uvcReport("No file name to save to");
-        return FALSE;
-    }
-    return cp->cp_Files.fl_Stem || uvcOpenFiles(&cp->cp_Files, up->up_Stem, up->up_Mode.uvq_FourCC);
-}
-
 /* Do a command. FALSE if it failed, with the reason kept. */
 static BOOL obey(struct UvcPreview *up, struct UvpCommand *cmd)
 {
@@ -914,26 +897,19 @@ static BOOL obey(struct UvcPreview *up, struct UvpCommand *cmd)
             return TRUE;
 
         case UVPC_RECORD:
+            up->up_Recording = FALSE;
+            uvcStopRecording(&up->up_Capture.cp_Recording);
             if(!cmd->cmd_Data)
             {
-                up->up_Recording = FALSE;
                 return TRUE;
             }
-            if(!uvpRunning(up) || !openOutput(up))
+            if(!uvpRunning(up) ||
+               !uvcStartRecording(&up->up_Capture.cp_Recording, &up->up_Camera, up->up_Stem, &up->up_Mode))
             {
                 return FALSE;
             }
-            up->up_RecordWaits = uvcIsStream(up->up_Mode.uvq_FourCC);
+            up->up_RecordWaits = up->up_Mode.uvq_FourCC == UVFCC_H264;
             up->up_Recording = TRUE;
-            return TRUE;
-
-        case UVPC_SNAPSHOT:
-            /* one frame of a stream format shows nothing without those before it */
-            if(!uvpRunning(up) || uvcIsStream(up->up_Mode.uvq_FourCC) || !openOutput(up))
-            {
-                return FALSE;
-            }
-            up->up_Snapshot = TRUE;
             return TRUE;
 
         case UVPC_SETTINGS:
@@ -1158,11 +1134,6 @@ void uvpStop(struct UvcPreview *up)
 BOOL uvpRecord(struct UvcPreview *up, BOOL on)
 {
     return command(up, UVPC_RECORD, (APTR) (IPTR) on);
-}
-
-BOOL uvpSnapshot(struct UvcPreview *up)
-{
-    return command(up, UVPC_SNAPSHOT, NULL);
 }
 
 BOOL uvpSettings(struct UvcPreview *up)

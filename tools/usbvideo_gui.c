@@ -48,7 +48,6 @@ enum
     ID_SIZE,
     ID_START,
     ID_STOP,
-    ID_SNAPSHOT,
     ID_RECORD,
     ID_SETTINGS
 };
@@ -77,7 +76,6 @@ struct Gui
     Object *gu_Rescan;
     Object *gu_Start;
     Object *gu_Stop;
-    Object *gu_Snapshot;
     Object *gu_Record;
     Object *gu_Settings;
     Object *gu_Status;
@@ -265,7 +263,7 @@ static void fillFormats(struct Gui *gui)
 
             if(!known)
             {
-                choiceAdd(ch, fourcc, ((fourcc == UVFCC_MJPG) || (fourcc == UVFCC_H264)) ? "%s" : "%s (no preview)",
+                choiceAdd(ch, fourcc, ((fourcc == UVFCC_MJPG) || (fourcc == UVFCC_H264)) ? "%s" : "%s (no picture)",
                           uvcFourCCText(fourcc, name));
             }
         }
@@ -295,8 +293,7 @@ static void showState(struct Gui *gui)
     set(gui->gu_StemPop, MUIA_Disabled, running);
     set(gui->gu_Start, MUIA_Disabled, running || !chosenMode(gui));
     set(gui->gu_Stop, MUIA_Disabled, !running);
-    set(gui->gu_Snapshot, MUIA_Disabled, !running || uvcIsStream(choiceValue(&gui->gu_Format)));
-    set(gui->gu_Record, MUIA_Disabled, !running);
+    set(gui->gu_Record, MUIA_Disabled, !running || !uvcCanRecord(choiceValue(&gui->gu_Format)));
     set(gui->gu_Settings, MUIA_Disabled, !camera);
     if(!running)
     {
@@ -546,14 +543,14 @@ static BOOL makeWindow(struct Gui *gui, CONST_STRPTR version)
                     Child, (IPTR) Label("Save to"),
                     Child, (IPTR) (gui->gu_StemPop = PopaslObject,
                         MUIA_CycleChain, 1,
-                        MUIA_ShortHelp, (IPTR) "Files take this name and a number, an H.264 stream this name and .h264",
+                        MUIA_ShortHelp, (IPTR) "Each recording takes this name and a number: RAM:cam-0001.mkv",
                         MUIA_Popstring_String, (IPTR) (gui->gu_Stem = StringObject, StringFrame,
                             MUIA_CycleChain, 1,
                             MUIA_String_MaxLen, STEM_SIZE,
                             MUIA_String_Contents, (IPTR) DEFAULT_STEM,
                             End),
                         MUIA_Popstring_Button, (IPTR) PopButton(MUII_PopFile),
-                        ASLFR_TitleText, (IPTR) "Save frames as",
+                        ASLFR_TitleText, (IPTR) "Record as",
                         ASLFR_DoSaveMode, TRUE,
                         End),
                     End,
@@ -561,7 +558,6 @@ static BOOL makeWindow(struct Gui *gui, CONST_STRPTR version)
                     MUIA_Group_SameWidth, TRUE,
                     Child, (IPTR) (gui->gu_Start = button("Start", MUIV_InputMode_RelVerify)),
                     Child, (IPTR) (gui->gu_Stop = button("Stop", MUIV_InputMode_RelVerify)),
-                    Child, (IPTR) (gui->gu_Snapshot = button("Snapshot", MUIV_InputMode_RelVerify)),
                     Child, (IPTR) (gui->gu_Record = button("Record", MUIV_InputMode_Toggle)),
                     Child, (IPTR) (gui->gu_Settings = button("Camera settings...", MUIV_InputMode_RelVerify)),
                     End,
@@ -587,7 +583,6 @@ static void connectWindow(struct Gui *gui)
     notifyPressed(gui, gui->gu_Rescan, ID_RESCAN);
     notifyPressed(gui, gui->gu_Start, ID_START);
     notifyPressed(gui, gui->gu_Stop, ID_STOP);
-    notifyPressed(gui, gui->gu_Snapshot, ID_SNAPSHOT);
     notifyPressed(gui, gui->gu_Settings, ID_SETTINGS);
     DoMethod(gui->gu_Record, MUIM_Notify, MUIA_Selected, MUIV_EveryTime,
              gui->gu_App, 2, MUIM_Application_ReturnID, ID_RECORD);
@@ -622,10 +617,6 @@ static void obey(struct Gui *gui, LONG id)
 
         case ID_STOP:
             uvpStop(gui->gu_Stream);
-            break;
-
-        case ID_SNAPSHOT:
-            uvpSnapshot(gui->gu_Stream);
             break;
 
         case ID_RECORD:

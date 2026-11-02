@@ -3,31 +3,28 @@
  *                          USBVideo - UVC tool for Neptune
  *----------------------------------------------------------------------------
  * usbvideo.device client: in the Shell it prints camera info and the mode
- * table and captures frames to files; from its icon, or with GUI, it opens a
- * window for all of that with a live preview.
+ * table and records video; from its icon, or with GUI, it opens a window for
+ * all of that with a live preview.
  *
  *   USBVideo                        unit 0: camera info and mode table
  *   USBVideo UNIT=1                 another unit
- *   USBVideo TO=RAM:shot            one frame in the default mode,
- *                                  RAM:shot-0001.jpg
- *   USBVideo WIDTH=1280 HEIGHT=720 FPS=30 FRAMES=10 TO=RAM:cam
- *                                  10 frames in that mode, RAM:cam-0001.jpg
- *                                  .. RAM:cam-0010.jpg
- *   USBVideo FORMAT=YUY2 FRAMES=10 TO=RAM:cam
- *                                  raw frames, RAM:cam-0001.yuy2 ...
+ *   USBVideo TO=RAM:cam             record in the default mode until Ctrl-C,
+ *                                  into RAM:cam-0001.mkv, or the first number
+ *                                  free: H264, MJPG, YUY2 or NV12, as
+ *                                  Matroska; close to 4 GiB the recording
+ *                                  goes on in the next file
  *   USBVideo FORMAT=H264 WIDTH=1280 HEIGHT=720 FRAMES=300 TO=RAM:cam
- *                                  H.264 elementary stream, RAM:cam.h264.
- *                                  BITRATE (bit/s) and KEYFRAME (key frame
- *                                  interval, ms) override the encoder's
- *                                  defaults
+ *                                  300 frames in that mode. BITRATE (bit/s)
+ *                                  and KEYFRAME (key frame interval, ms)
+ *                                  override the encoder's defaults
  *   USBVideo PREVIEW FORMAT=H264 WIDTH=1280 HEIGHT=720
  *                                  a window that shows the stream, decoded
  *                                  by videocodec.library, until Ctrl-C or the
- *                                  window closes; with TO it saves too
+ *                                  window closes; with TO it records too
  *   USBVideo GUI                   the window (needs MUI); UNIT picks the camera
  *
  * Mode parameters not given come from the default mode (the settings
- * window's, else the camera's). Ctrl-C stops; frames written are kept.
+ * window's, else the camera's). Ctrl-C stops; what was recorded is kept.
  */
 
 #include <proto/dos.h>
@@ -112,7 +109,7 @@ static STRPTR whyStopped(const struct UvcCapture *cp)
     }
     if(cp->cp_NotSaved)
     {
-        return "could not save";
+        return "could not record";
     }
     if(cp->cp_Error)
     {
@@ -122,18 +119,18 @@ static STRPTR whyStopped(const struct UvcCapture *cp)
 }
 
 /* Print the capture summary (saved, lost, early stop); return the DOS
-   return code */
-static LONG reportCapture(const struct UvcCapture *cp)
+   return code. Without a number of frames, Ctrl-C is how it ends. */
+static LONG reportCapture(const struct UvcCapture *cp, ULONG frames)
 {
-    ULONG saved = cp->cp_Files.fl_Saved;
+    ULONG saved = cp->cp_Recording.rc_Saved;
     ULONG lost = cp->cp_Missed + cp->cp_TooLong;
-    STRPTR stopped = whyStopped(cp);
+    STRPTR stopped = (frames || !cp->cp_Interrupted) ? whyStopped(cp) : NULL;
 
     if(saved)
     {
-        uvcPrintSaved(&cp->cp_Files);
+        uvcPrintSaved(&cp->cp_Recording);
     } else {
-        PutStr("Nothing was saved.\n");
+        PutStr("Nothing was recorded.\n");
     }
     if(lost)
     {
@@ -150,9 +147,9 @@ static LONG reportCapture(const struct UvcCapture *cp)
     return (stopped || lost) ? RETURN_WARN : RETURN_OK;
 }
 
-/* Set the mode, capture frames frames into files named from stem; return
-   the DOS return code */
-static LONG saveFrames(struct UvcCamera *cm, struct UsbVideoModeReq *uvq, ULONG frames, STRPTR stem)
+/* Set the mode, record frames frames, or until Ctrl-C if 0, into a file
+   named from stem; return the DOS return code */
+static LONG record(struct UvcCamera *cm, struct UsbVideoModeReq *uvq, ULONG frames, STRPTR stem)
 {
     struct UvcCapture cp;
 
@@ -162,13 +159,13 @@ static LONG saveFrames(struct UvcCamera *cm, struct UsbVideoModeReq *uvq, ULONG 
     }
     if(uvcStartCapture(&cp, cm, uvq, stem))
     {
-        while((cp.cp_Files.fl_Saved < frames) && uvcNextFrame(&cp))
+        while((!frames || (cp.cp_Recording.rc_Saved < frames)) && uvcNextFrame(&cp))
         {
-            /* uvcNextFrame() writes each frame */
+            /* uvcNextFrame() records each frame */
         }
     }
     uvcStopCapture(&cp);
-    return reportCapture(&cp);
+    return reportCapture(&cp, frames);
 }
 
 /* Print what a preview's stream did */
@@ -231,9 +228,9 @@ static LONG preview(ULONG unit, struct UsbVideoModeReq *uvq, STRPTR stem)
     return rc;
 }
 
-/* Print the camera, then save frames from it, or list its modes if there is
-   no file name; return the DOS return code */
-static LONG listOrSave(ULONG unit, struct UsbVideoModeReq *uvq, ULONG frames, STRPTR stem)
+/* Print the camera, then record from it, or list its modes if there is no
+   file name; return the DOS return code */
+static LONG listOrRecord(ULONG unit, struct UsbVideoModeReq *uvq, ULONG frames, STRPTR stem)
 {
     struct UvcCamera cm;
     LONG rc = RETURN_FAIL;
@@ -243,7 +240,7 @@ static LONG listOrSave(ULONG unit, struct UsbVideoModeReq *uvq, ULONG frames, ST
         uvcPrintCamera(&cm);
         if(stem)
         {
-            rc = saveFrames(&cm, uvq, frames, stem);
+            rc = record(&cm, uvq, frames, stem);
         } else {
             uvcPrintModes(&cm);
             rc = RETURN_OK;
@@ -296,7 +293,7 @@ int main(int argc, char *argv[])
 
     if(howtosave && !stem && !ArgsArray[ARGS_PREVIEW])
     {
-        PutStr("Add TO=<name> to save in that mode. Without TO, USBVideo lists the modes.\n");
+        PutStr("Add TO=<name> to record in that mode. Without TO, USBVideo lists the modes.\n");
     }
     else if(ArgsArray[ARGS_GUI])
     {
@@ -310,7 +307,7 @@ int main(int argc, char *argv[])
         }
         rc = preview(unit, &uvq, stem);
     } else {
-        rc = listOrSave(unit, &uvq, numberArgument(ARGS_FRAMES, 1), stem);
+        rc = listOrRecord(unit, &uvq, numberArgument(ARGS_FRAMES, 0), stem);
     }
     FreeArgs(rdargs);
     return rc;

@@ -39,7 +39,7 @@ struct UvpCounts
     ULONG uc_Sent;     /* to the decoder */
     ULONG uc_Pictures; /* from the decoder */
     ULONG uc_Shown;    /* into the window; of many that came at once only the newest is */
-    ULONG uc_Saved;    /* to files */
+    ULONG uc_Saved;    /* recorded */
     ULONG uc_Lag;      /* frames sent and not yet back as pictures, when the last picture came */
     ULONG uc_LagMost;  /* the most uc_Lag was */
 };
@@ -66,15 +66,13 @@ struct Window *uvpWindow(const struct UvcPreview *up); /* the preview's, NULL if
 /* Keep the preview window off this box of its screen, as far as there is room:
    the caller's own window, say. For the windows of the starts that follow. */
 void uvpKeepClear(struct UvcPreview *up, const struct IBox *box);
-/* Set the mode and run the stream. stem names the files uvpRecord() and
-   uvpSnapshot() write (uvcOpenFiles()); NULL if nothing is to be saved. */
+/* Set the mode and run the stream. stem names the files uvpRecord() writes
+   (uvcStartRecording()); NULL if nothing is to be recorded. */
 BOOL uvpStart(struct UvcPreview *up, const struct UsbVideoModeReq *uvq, STRPTR stem);
 void uvpStop(struct UvcPreview *up);
-/* Save every frame from here on, or no more. An H.264 file starts at a key
-   frame, which the camera is asked for. */
+/* Record every frame from here on into a new Matroska file, or no more:
+   H.264 or MJPEG, H.264 from a key frame, which the camera is asked for */
 BOOL uvpRecord(struct UvcPreview *up, BOOL on);
-/* Save the next frame */
-BOOL uvpSnapshot(struct UvcPreview *up);
 /* Open the camera's settings window */
 BOOL uvpSettings(struct UvcPreview *up);
 

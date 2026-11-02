@@ -162,7 +162,7 @@ Each is `DEVS:USBClasses/<name>.usbclass`.
 - **Gadget tools** (optional, `SYS:Tools/`): `USBRadio`, `USBPencam`, `USBSonixcam`,
   `USBRocket`, `USBPowMan`, `USBUPS`, `USBVideo`.
 - **USBVideo** works in the Shell, or from its icon as a window: pick a camera and a mode,
-  save snapshots or video, and open the camera's settings. With `videocodec.library` (PiStorm
+  record video, and open the camera's settings. With `videocodec.library` (PiStorm
   on a Raspberry Pi 4 or CM4) it shows the live picture of an MJPEG or H.264 mode.
 - **`neptune.vhi`** (optional, `LIBS:VHI/`) lets VHI programs such as cAMIra use USB webcams.
 

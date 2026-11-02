@@ -20,13 +20,10 @@
 
 #include "uvc_client.h"
 #include "mjpegdht.h"
+#include "mkv.h"
 
-#define NAME_SIZE   256 /* frame file name buffer */
-#define DIGITS_MAX  10  /* decimal digits of a ULONG */
 #define FOURCC_LEN  4
-#define ENDING_SIZE (1 + DIGITS_MAX + 1 + FOURCC_LEN + 1) /* suffix after the stem: "-", number,
-                                                            ".", extension, NUL */
-#define REPORT_SIZE (NAME_SIZE + 64) /* a failure's text in the Shell, a file name in it */
+#define REPORT_SIZE (UVC_NAME_SIZE + 64) /* a failure's text in the Shell, a file name in it */
 #define READ_ALIGN  64 /* of a read's buffer: a cache line, for a decoder that reads it in place */
 
 #define NAL_TYPE_MASK   0x1f
@@ -34,7 +31,35 @@
 #define NAL_SLICE_LAST  4 /* its data partitions, up to here */
 #define NAL_SLICE_IDR   5
 
+#define USUAL_INTERVAL (UVC_INTERVAL_UNITS / 30) /* should a mode give none */
+#define MOVIE_ENDING   ".mkv"
+#define MOVIE_NUMBER   "-0000" /* what the name adds to the stem, besides the ending */
+#define MOVIE_APP      "Neptune USBVideo"
+#define MOVIE_ROOM     (1UL << 20) /* of the muxer's memory, past a quarter more than a frame */
+#define MOVIE_ALL      0xffffffffUL /* what waits for the file: all of it */
+#define MOVIE_FILE_MOST (0xffffffffUL - (64UL << 20)) /* the muxer counts to 4 GiB: a new file well before */
+
 _Static_assert(UVC_JPEG_ROOM == MJPEG_STD_DHT_SIZE, "the room in front of a frame takes the tables exactly");
+
+/* A recording, in Matroska files of up to 4 GiB; the muxer's memory follows it */
+struct UvcMovie
+{
+    struct mkv        mv_Mux;
+    struct mkv_io     mv_Io;
+    struct mkv_track  mv_Track;
+    ULONG             mv_Memory;    /* the muxer's, in bytes */
+    struct UvcCamera *mv_Camera;    /* asked for a key frame at a new file */
+    CONST_STRPTR      mv_Stem;      /* the files' names begin with it */
+    ULONG             mv_FrameSize; /* of a raw format's frame: no other is whole */
+    BPTR              mv_File;      /* the file being written */
+    BOOL              mv_Begun;     /* its first frame is in */
+    ULONG             mv_ClockKHz;  /* of ivr_PTS, 0 if the camera has no clock */
+    ULONG             mv_Interval;  /* of the mode's frames, 100 ns units */
+    ULONG             mv_LastPTS;   /* of the last frame in */
+    ULONG             mv_LastSeq;
+    ULONG             mv_Ms;        /* its time, from the file's first */
+    ULONG             mv_Rest;      /* of its clock's ticks, what was left below a ms */
+};
 
 UBYTE *uvcReportTo;
 
@@ -328,17 +353,26 @@ void uvcPrintMode(const struct UsbVideoModeReq *uvq)
  * Capture
  */
 
-/* Start a capture in the mode already set: open the output if stem is not
-   NULL, submit the reads, send CMD_START. On failure report the reason and
-   return FALSE. Call uvcStopCapture() in either case. */
+/* Start a capture in the mode already set: start recording if stem is not
+   NULL, submit the reads, send CMD_START, and ask an H.264 camera for the key
+   frame a recording begins at. On failure report the reason and return
+   FALSE. Call uvcStopCapture() in either case. */
 BOOL uvcStartCapture(struct UvcCapture *cp, struct UvcCamera *cm, const struct UsbVideoModeReq *uvq, STRPTR stem)
 {
-    return uvcMakeReads(cp, cm, 0, uvq->uvq_MaxFrameSize, MEMF_ANY) &&
-           uvcOpenFiles(&cp->cp_Files, stem, uvq->uvq_FourCC) && uvcStartStream(cp);
+    if(!uvcMakeReads(cp, cm, 0, uvq->uvq_MaxFrameSize, MEMF_ANY) ||
+       (stem && !uvcStartRecording(&cp->cp_Recording, cm, stem, uvq)) || !uvcStartStream(cp))
+    {
+        return FALSE;
+    }
+    if(stem && (uvq->uvq_FourCC == UVFCC_H264))
+    {
+        uvcRequestKeyFrame(cm);
+    }
+    return TRUE;
 }
 
 /* Return the read holding the next complete frame, waiting for one.
-   Resubmit cp_InHand first, write the frame if the capture has output. NULL
+   Resubmit cp_InHand first, record the frame if the capture records. NULL
    ends the capture; cp_Error, cp_Interrupted or cp_NotSaved gives the reason.
    Ctrl-C is checked before every take, so a continuous frame flow cannot
    starve it. */
@@ -360,7 +394,7 @@ struct IOVideoReq *uvcNextFrame(struct UvcCapture *cp)
             struct IOVideoReq *ivr = rd->rd_Req;
 
             cp->cp_InHand = rd;
-            if(!uvcWriteFrame(&cp->cp_Files, ivr->ivr_Std.io_Data, ivr->ivr_Std.io_Actual))
+            if(!uvcRecordFrame(&cp->cp_Recording, ivr))
             {
                 cp->cp_NotSaved = TRUE;
                 return NULL;
@@ -380,8 +414,8 @@ struct IOVideoReq *uvcNextFrame(struct UvcCapture *cp)
     return NULL;
 }
 
-/* End a capture: stop the stream, reclaim and free all reads, close the
-   output */
+/* End a capture: stop the stream, reclaim and free all reads, finish the
+   recording */
 void uvcStopCapture(struct UvcCapture *cp)
 {
     uvcHaltCapture(cp);
@@ -394,7 +428,7 @@ void uvcStopCapture(struct UvcCapture *cp)
         DeleteIORequest((struct IORequest *) rd->rd_Req);
         rd->rd_Req = NULL;
     }
-    uvcCloseFiles(&cp->cp_Files);
+    uvcStopRecording(&cp->cp_Recording);
 }
 
 /*
@@ -629,168 +663,296 @@ ULONG uvcJpegFill(UBYTE *buffer, ULONG len)
 }
 
 /*
- * Files
+ * Recording
  */
 
-/* Return TRUE for formats whose frames are segments of one elementary
-   stream, saved to a single file */
-BOOL uvcIsStream(ULONG fourcc)
+/* The muxer's write (struct mkv_io); nonzero when all of it went */
+static int movieWrite(void *user, const void *data, uint32_t size)
 {
-    return fourcc == UVFCC_H264;
+    struct UvcMovie *mv = user;
+
+    return Write(mv->mv_File, (APTR) data, size) == (LONG) size;
 }
 
-/* Write the NUL-terminated file extension for a FourCC: "jpg" for MJPG,
-   else the FourCC lowercased without its padding (yuy2, h264) */
-static void extension(ULONG fourcc, UBYTE *ext)
+/* The muxer's seek (struct mkv_io); nonzero when the next write goes there.
+   From above 2 GiB Seek() answers a negative old position, so IoErr() tells. */
+static int movieSeek(void *user, uint32_t position)
 {
-    if(fourcc == UVFCC_MJPG)
+    struct UvcMovie *mv = user;
+
+    SetIoErr(0);
+    Seek(mv->mv_File, position, OFFSET_BEGINNING);
+    return IoErr() == 0;
+}
+
+/* Return TRUE for a format that can be recorded */
+BOOL uvcCanRecord(ULONG fourcc)
+{
+    return (fourcc == UVFCC_H264) || (fourcc == UVFCC_MJPG) || (fourcc == UVFCC_YUY2) || (fourcc == UVFCC_NV12);
+}
+
+/* Say why the recording stopped */
+static void recordingFailed(const struct UvcRecording *rc, int error)
+{
+    uvcReport((error == MKV_ERR_STREAM) ? "The camera's H.264 cannot go into '%s': no SPS or PPS at its key frame" :
+                                          "Could not write '%s'", rc->rc_Name);
+}
+
+/* Begin the recording's next file, <stem>-NNNN.mkv at the first free number,
+   so that none is written over. On failure report the reason and return
+   FALSE. */
+static BOOL fileBegin(struct UvcRecording *rc)
+{
+    struct UvcMovie *mv = rc->rc_Movie;
+    ULONG number = 0;
+    BPTR lock;
+
+    do
     {
-        strcpy((char *) ext, "jpg");
-        return;
-    }
-    uvcFourCCText(fourcc, ext);
-    ext[strcspn((const char *) ext, " ")] = 0;
-    strlwr((char *) ext);
-}
-
-/* Build the file name for a frame number: <stem>-NNNN.<ext>, or
-   <stem>.<ext> for a stream format. uvcOpenFiles() guarantees the result
-   fits NAME_SIZE; snprintf() would cut it rather than overrun. */
-static void fileName(const struct UvcFiles *fl, ULONG number, UBYTE *name)
-{
-    UBYTE ext[UVC_FOURCC_SIZE];
-
-    extension(fl->fl_FourCC, ext);
-    if(uvcIsStream(fl->fl_FourCC))
+        snprintf((char *) rc->rc_Name, UVC_NAME_SIZE, "%s-%04lu%s", (const char *) mv->mv_Stem, ++number, MOVIE_ENDING);
+        if((lock = Lock(rc->rc_Name, SHARED_LOCK)))
+        {
+            UnLock(lock);
+        }
+    } while(lock);
+    if(!(mv->mv_File = Open(rc->rc_Name, MODE_NEWFILE)))
     {
-        snprintf((char *) name, NAME_SIZE, "%s.%s", (char *) fl->fl_Stem, (char *) ext);
-    } else {
-        snprintf((char *) name, NAME_SIZE, "%s-%04lu.%s", (char *) fl->fl_Stem, number, (char *) ext);
+        uvcReport("Could not open '%s' for writing", rc->rc_Name);
+        return FALSE;
     }
-}
-
-/* Write len bytes; return TRUE if all were written */
-static BOOL writeAll(BPTR fh, const UBYTE *data, ULONG len)
-{
-    return Write(fh, (APTR) data, len) == (LONG) len;
-}
-
-/* Write one frame to an open file. An MJPEG frame without DHT gets the
-   standard Huffman tables inserted before SOS (MJPEG cameras omit them,
-   JPEG decoders need them); other formats are written unchanged. */
-static BOOL writeFrameData(BPTR fh, ULONG fourcc, const UBYTE *frame, ULONG len)
-{
-    ULONG dhtpos = (fourcc == UVFCC_MJPG) ? mjpegMissingDHT(frame, len) : 0;
-
-    if(!dhtpos)
+    mkv_open(&mv->mv_Mux, &mv->mv_Io, &mv->mv_Track, mv + 1, mv->mv_Memory);
+    mv->mv_Begun = FALSE;
+    mv->mv_Ms = 0;
+    mv->mv_Rest = 0;
+    if(!rc->rc_Files++)
     {
-        return writeAll(fh, frame, len);
+        strcpy((char *) rc->rc_First, (const char *) rc->rc_Name);
     }
-    return writeAll(fh, frame, dhtpos) && writeAll(fh, MJPEGStdDHT, MJPEG_STD_DHT_SIZE) &&
-           writeAll(fh, frame + dhtpos, len - dhtpos);
+    return TRUE;
 }
 
-/* Initialise the output; open the file now for a stream format. A NULL
-   stem disables saving. If the stem is too long for NAME_SIZE or the stream
-   file cannot be opened, print the reason, leave saving disabled and
-   return FALSE. */
-BOOL uvcOpenFiles(struct UvcFiles *fl, STRPTR stem, ULONG fourcc)
+/* Finish the file being written: its last writes, and away with it if
+   nothing went in. FALSE if those writes failed, with the reason reported. */
+static BOOL fileEnd(struct UvcRecording *rc)
 {
-    fl->fl_Stem = NULL;
-    fl->fl_FourCC = fourcc;
-    fl->fl_Stream = 0;
-    fl->fl_Saved = 0;
-    if(!stem)
+    struct UvcMovie *mv = rc->rc_Movie;
+    int error = mkv_close(&mv->mv_Mux);
+
+    Close(mv->mv_File);
+    if(!mv->mv_Mux.pictures)
     {
-        return TRUE;
+        DeleteFile(rc->rc_Name);
     }
-    if(strlen(stem) + ENDING_SIZE > NAME_SIZE)
+    if(error == MKV_ERR_WRITE)
+    {
+        recordingFailed(rc, error);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/* Start recording, in the mode set on cm, into Matroska files named from the
+   stem (fileBegin()). If there is no stem, the format cannot be recorded or
+   the file cannot be opened, report the reason, leave the recording closed
+   and return FALSE. */
+BOOL uvcStartRecording(struct UvcRecording *rc, struct UvcCamera *cm, CONST_STRPTR stem,
+                       const struct UsbVideoModeReq *uvq)
+{
+    ULONG fourcc = uvq->uvq_FourCC;
+    ULONG interval = uvq->uvq_Interval ? uvq->uvq_Interval : USUAL_INTERVAL;
+    ULONG memory = uvq->uvq_MaxFrameSize + (uvq->uvq_MaxFrameSize >> 2) + MOVIE_ROOM;
+    ULONG fps = (UVC_INTERVAL_UNITS + (interval >> 1)) / interval;
+
+    rc->rc_Movie = NULL;
+    rc->rc_Saved = 0;
+    rc->rc_Files = 0;
+    if(!stem || !stem[0])
+    {
+        uvcReport("No file name to save to");
+        return FALSE;
+    }
+    if(strlen(stem) + sizeof(MOVIE_NUMBER MOVIE_ENDING) > UVC_NAME_SIZE)
     {
         uvcReport("The name '%s' is too long", stem);
         return FALSE;
     }
-    fl->fl_Stem = stem;
-    if(!uvcIsStream(fourcc))
+    if(!uvcCanRecord(fourcc))
     {
-        return TRUE;
+        uvcReport("Only H264, MJPG, YUY2 and NV12 can be recorded");
+        return FALSE;
     }
 
-    UBYTE name[NAME_SIZE];
+    struct UvcMovie *mv = AllocVec(sizeof(*mv) + memory, MEMF_ANY | MEMF_CLEAR);
+    struct UsbVideoInfo uvi; /* cm_Info is from the open, and the clock comes with a mode */
 
-    fileName(fl, 0, name);
-    if(!(fl->fl_Stream = Open(name, MODE_NEWFILE)))
+    if(!mv)
     {
-        uvcReport("Could not open '%s' for writing", name);
-        fl->fl_Stem = NULL;
+        uvcReport("Not enough memory to record: %ld bytes", memory);
+        return FALSE;
+    }
+    mv->mv_Io.user = mv;
+    mv->mv_Io.write = movieWrite;
+    mv->mv_Io.seek = movieSeek;
+    mv->mv_Track.codec = (fourcc == UVFCC_H264) ? MKV_H264 : (fourcc == UVFCC_MJPG) ? MKV_MJPEG : MKV_RAW;
+    mv->mv_Track.fourcc = fourcc;
+    mv->mv_Track.width = uvq->uvq_Width;
+    mv->mv_Track.height = uvq->uvq_Height;
+    mv->mv_Track.fps = fps ? fps : 1;
+    mv->mv_Track.app = MOVIE_APP;
+    mv->mv_Memory = memory;
+    mv->mv_Camera = cm;
+    mv->mv_Stem = stem;
+    mv->mv_FrameSize = uvq->uvq_MaxFrameSize;
+    mv->mv_Interval = interval;
+    if(!uvcCommand(cm->cm_Request, NSCMD_UV_GETINFO, &uvi, sizeof(uvi)))
+    {
+        mv->mv_ClockKHz = uvi.uvi_ClockFrequency / 1000;
+    }
+    rc->rc_Movie = mv;
+    if(!fileBegin(rc))
+    {
+        FreeVec(mv);
+        rc->rc_Movie = NULL;
         return FALSE;
     }
     return TRUE;
 }
 
-/* Write the next frame to a new file, or append it to the stream file. On
-   failure print the reason and return FALSE. */
-BOOL uvcWriteFrame(struct UvcFiles *fl, const UBYTE *frame, ULONG len)
+/* Go on in a new file; on failure report the reason, end the recording and
+   return FALSE. H.264 has to begin it at a key frame, which the camera is
+   asked for. */
+static BOOL fileNext(struct UvcRecording *rc)
 {
-    UBYTE name[NAME_SIZE];
+    struct UvcMovie *mv = rc->rc_Movie;
 
-    if(!fl->fl_Stem)
+    if(!fileEnd(rc) || !fileBegin(rc))
     {
-        return TRUE;
-    }
-    fileName(fl, fl->fl_Saved + 1, name);
-
-    BPTR fh = fl->fl_Stream ? fl->fl_Stream : Open(name, MODE_NEWFILE);
-
-    if(!fh)
-    {
-        uvcReport("Could not open '%s' for writing", name);
+        FreeVec(mv);
+        rc->rc_Movie = NULL;
         return FALSE;
     }
-
-    BOOL ok = writeFrameData(fh, fl->fl_FourCC, frame, len);
-
-    if(!fl->fl_Stream)
+    if(mv->mv_Track.codec == MKV_H264)
     {
-        Close(fh);
+        uvcRequestKeyFrame(mv->mv_Camera);
     }
-    if(!ok)
-    {
-        uvcReport("Could not write '%s'", name);
-        return FALSE;
-    }
-    fl->fl_Saved++;
     return TRUE;
 }
 
-/* Close the stream file, if open */
-void uvcCloseFiles(struct UvcFiles *fl)
+/* Return the time of a frame going in, in ms from the file's first. The
+   camera's clock says when it took the picture, whatever the light does to
+   its rate; without one, frames count at the mode's rate. */
+static ULONG movieTime(struct UvcMovie *mv, const struct IOVideoReq *ivr)
 {
-    if(fl->fl_Stream)
+    BOOL clock = (ivr->ivr_Flags & IVRF_PTS) && mv->mv_ClockKHz;
+    ULONG perms = clock ? mv->mv_ClockKHz : UVC_INTERVAL_UNITS / 1000;
+    ULONG ticks = clock ? ivr->ivr_PTS - mv->mv_LastPTS : (ivr->ivr_Sequence - mv->mv_LastSeq) * mv->mv_Interval;
+
+    if(mv->mv_Begun && ((LONG) ticks > 0))
     {
-        Close(fl->fl_Stream);
-        fl->fl_Stream = 0;
+        mv->mv_Rest += ticks % perms;
+        mv->mv_Ms += ticks / perms + mv->mv_Rest / perms;
+        mv->mv_Rest %= perms;
+    }
+    mv->mv_LastPTS = ivr->ivr_PTS;
+    mv->mv_LastSeq = ivr->ivr_Sequence;
+    return mv->mv_Ms;
+}
+
+/* Return how much of a frame goes in: H.264 as it is, a JPEG up to its EOI,
+   a raw frame only if it is whole; 0 to leave it out */
+static ULONG frameLength(const struct UvcMovie *mv, const UBYTE *frame, ULONG len)
+{
+    switch(mv->mv_Track.codec)
+    {
+        case MKV_MJPEG:
+            return jpegLength(frame, len);
+
+        case MKV_RAW:
+            return (len == mv->mv_FrameSize) ? len : 0;
+
+        default:
+            return len;
     }
 }
 
-/* Print the number of frames saved and the first..last file name; print
-   nothing if no frame was saved */
-void uvcPrintSaved(const struct UvcFiles *fl)
+/* Put the frame a read brought into the recording, and what waits into the
+   file; nothing if no recording is open. Close to 4 GiB it goes on in a new
+   file. H.264 can only begin a file at a key frame, and a frame with
+   nothing in it is left out; neither counts as saved. On failure report the
+   reason and return FALSE. */
+BOOL uvcRecordFrame(struct UvcRecording *rc, const struct IOVideoReq *ivr)
 {
-    if(!fl->fl_Saved)
+    struct UvcMovie *mv = rc->rc_Movie;
+
+    if(!mv)
+    {
+        return TRUE;
+    }
+
+    struct mkv *mux = &mv->mv_Mux;
+    const UBYTE *frame = ivr->ivr_Std.io_Data;
+    ULONG len = frameLength(mv, frame, ivr->ivr_Std.io_Actual);
+    BOOL key = (mv->mv_Track.codec != MKV_H264) || uvcH264Key(frame, len);
+
+    if(len && mv->mv_Begun && (mkv_bytes(mux) + len + MJPEG_STD_DHT_SIZE > MOVIE_FILE_MOST) && !fileNext(rc))
+    {
+        return FALSE;
+    }
+    if(!len || (!mv->mv_Begun && !key))
+    {
+        return TRUE;
+    }
+
+    ULONG ms = movieTime(mv, ivr);
+    ULONG dht = (mv->mv_Track.codec == MKV_MJPEG) ? mjpegMissingDHT(frame, len) : 0;
+
+    mv->mv_Begun = TRUE;
+    mkv_picture_begin(mux, ms, key);
+    mkv_picture_bytes(mux, frame, dht);
+    if(dht)
+    {
+        mkv_picture_bytes(mux, MJPEGStdDHT, MJPEG_STD_DHT_SIZE);
+    }
+    mkv_picture_bytes(mux, frame + dht, len - dht);
+
+    int error = mkv_picture_end(mux);
+
+    if(!error)
+    {
+        error = mkv_flush(mux, MOVIE_ALL);
+    }
+    if(error)
+    {
+        recordingFailed(rc, error);
+        return FALSE;
+    }
+    rc->rc_Saved++;
+    return TRUE;
+}
+
+/* Finish the file, if one is open */
+void uvcStopRecording(struct UvcRecording *rc)
+{
+    if(rc->rc_Movie)
+    {
+        fileEnd(rc);
+        FreeVec(rc->rc_Movie);
+        rc->rc_Movie = NULL;
+    }
+}
+
+/* Print the frames recorded and the files' names; nothing if none */
+void uvcPrintSaved(const struct UvcRecording *rc)
+{
+    if(!rc->rc_Saved)
     {
         return;
     }
-
-    UBYTE first[NAME_SIZE];
-
-    fileName(fl, 1, first);
-    Printf("%ld %s saved as %s", fl->fl_Saved, (fl->fl_Saved == 1) ? "frame" : "frames", first);
-    if(!uvcIsStream(fl->fl_FourCC) && (fl->fl_Saved > 1))
+    Printf("%ld %s saved ", rc->rc_Saved, (rc->rc_Saved == 1) ? "frame" : "frames");
+    if(rc->rc_Files > 1)
     {
-        UBYTE last[NAME_SIZE];
-
-        fileName(fl, fl->fl_Saved, last);
-        Printf(" ... %s", last);
+        Printf("in %ld files, %s to %s\n", rc->rc_Files, rc->rc_First, rc->rc_Name);
+    } else {
+        Printf("as %s\n", rc->rc_Name);
     }
-    PutStr("\n");
 }

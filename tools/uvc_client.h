@@ -8,10 +8,10 @@
  *  - camera:  open a unit, read NSCMD_UV_GETINFO and the mode table
  *  - text:    print camera info, mode table, negotiated mode
  *  - capture: UVC_NUM_READS CMD_READs kept queued, complete frames returned
- *             one at a time and optionally written to files
+ *             one at a time and optionally recorded
  *  - reads:   the same reads driven by the caller's own loop
  *  - frames:  what a frame holds, for a program that decodes it
- *  - files:   frame file naming and output
+ *  - recording: into Matroska files
  *
  * A failure is described by uvcReport(), by default to the Shell. A program
  * with no Shell behind it, or that calls this from a process of its own, sets
@@ -29,6 +29,7 @@
 #define UVC_JPEG_ROOM 420 /* what uvcJpegFill() wants free before a frame: the standard Huffman tables */
 #define UVC_TEXT_SIZE 160 /* a failure's text in uvcReportTo, with its NUL */
 #define UVC_FOURCC_SIZE 5 /* a FourCC as text, with its NUL */
+#define UVC_NAME_SIZE 256 /* a file's name, with its NUL */
 
 /* Go through a mode table: its entries differ in length */
 #define UVC_EACH_MODE(uvm, table, size) \
@@ -50,13 +51,14 @@ struct UvcCamera
     UBYTE                cm_H264Unit;  /* the H.264 extension unit's ID, 0 if it has none */
 };
 
-/* Capture output: one file per frame, or one file for a stream format */
-struct UvcFiles
+/* A recording: H.264, MJPEG, YUY2 or NV12 into Matroska files of up to 4 GiB each */
+struct UvcRecording
 {
-    STRPTR fl_Stem;   /* file name stem; NULL disables saving */
-    ULONG  fl_FourCC; /* frame format */
-    BPTR   fl_Stream; /* handle of the stream file while open */
-    ULONG  fl_Saved;  /* frames written */
+    struct UvcMovie *rc_Movie; /* while recording; NULL: nothing is recorded */
+    ULONG            rc_Saved; /* frames written, in all its files */
+    ULONG            rc_Files; /* files begun */
+    UBYTE            rc_First[UVC_NAME_SIZE]; /* the first file's name */
+    UBYTE            rc_Name[UVC_NAME_SIZE];  /* the last's */
 };
 
 /* One read of a capture: its request, its buffer, and who has them */
@@ -78,14 +80,14 @@ struct UvcCapture
     struct UvcRead     cp_Reads[UVC_NUM_READS];
     struct UvcRead    *cp_InHand;      /* the frame last returned by uvcNextFrame(): resubmitted
                                           on the next call */
-    struct UvcFiles    cp_Files;
+    struct UvcRecording cp_Recording;
     BOOL               cp_Streaming;   /* CMD_START succeeded */
     ULONG              cp_LastSeq;     /* ivr_Sequence of the last frame received, 0 before the first */
     ULONG              cp_Missed;      /* sum of sequence gaps: frames dropped before delivery */
     ULONG              cp_TooLong;     /* frames completed with UVERR_OVERFLOW, discarded */
     LONG               cp_Error;       /* device error that ended the capture, 0 if none */
     BOOL               cp_Interrupted; /* ended by Ctrl-C */
-    BOOL               cp_NotSaved;    /* ended by a file write failure */
+    BOOL               cp_NotSaved;    /* ended by a failure to record */
 };
 
 /* Describe a failure: into uvcReportTo, else to the Shell */
@@ -121,11 +123,11 @@ ULONG uvcParseFourCC(STRPTR text);
 
 /* Capture */
 
-/* Start a capture in the mode already set, saving if stem is set; call uvcStopCapture() either way */
+/* Start a capture in the mode already set, recording if stem is set; call uvcStopCapture() either way */
 BOOL uvcStartCapture(struct UvcCapture *cp, struct UvcCamera *cm, const struct UsbVideoModeReq *uvq, STRPTR stem);
 /* Return the next complete frame, waiting for one; NULL ends the capture */
 struct IOVideoReq *uvcNextFrame(struct UvcCapture *cp);
-/* Stop the stream, free the reads, close the output */
+/* Stop the stream, free the reads, finish the recording */
 void uvcStopCapture(struct UvcCapture *cp);
 
 /* Reads */
@@ -150,17 +152,18 @@ BOOL uvcH264Key(const UBYTE *data, ULONG len);
 /* Make a JPEG at buffer of the frame UVC_JPEG_ROOM bytes in, unmoved; return its length, 0 to skip it */
 ULONG uvcJpegFill(UBYTE *buffer, ULONG len);
 
-/* Files */
+/* Recording */
 
-/* Return TRUE for a format saved as one file, not one file per frame */
-BOOL uvcIsStream(ULONG fourcc);
-/* Initialise the output, opening the file of a stream format; a NULL stem disables saving */
-BOOL uvcOpenFiles(struct UvcFiles *fl, STRPTR stem, ULONG fourcc);
-/* Write the next frame to a new file, or append it to the stream file */
-BOOL uvcWriteFrame(struct UvcFiles *fl, const UBYTE *frame, ULONG len);
-/* Close the stream file, if open */
-void uvcCloseFiles(struct UvcFiles *fl);
-/* Print the number of frames saved and their file names; nothing if none */
-void uvcPrintSaved(const struct UvcFiles *fl);
+/* Return TRUE for a format that can be recorded */
+BOOL uvcCanRecord(ULONG fourcc);
+/* Start recording, in the mode set on cm, into new files, <stem>-NNNN.mkv at the first free number */
+BOOL uvcStartRecording(struct UvcRecording *rc, struct UvcCamera *cm, CONST_STRPTR stem,
+                       const struct UsbVideoModeReq *uvq);
+/* Add the frame a read brought; nothing if no recording is open */
+BOOL uvcRecordFrame(struct UvcRecording *rc, const struct IOVideoReq *ivr);
+/* Finish the file, if one is open */
+void uvcStopRecording(struct UvcRecording *rc);
+/* Print the frames recorded and the file's name; nothing if none */
+void uvcPrintSaved(const struct UvcRecording *rc);
 
 #endif /* UVC_CLIENT_H */

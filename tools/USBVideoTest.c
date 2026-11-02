@@ -15,13 +15,12 @@
  *   USBVideoTest FRAMES=300        capture 300 frames in the default mode (or
  *                                  WIDTH/HEIGHT/FPS); check count, rate and
  *                                  frame contents
- *   USBVideoTest FRAMES=10 TO=RAM:cam   ... and save them as RAM:cam-0001.jpg ...
+ *   USBVideoTest FRAMES=10 TO=RAM:cam   ... and record them, MJPG, H264, YUY2 or NV12, into
+ *                                  RAM:cam-0001.mkv, or the first number free
  *   USBVideoTest FORMAT=YUY2 FRAMES=10  capture in a format other than the default
  *                                  (MJPG if available). Uncompressed: every
- *                                  frame must be exactly uvq_MaxFrameSize,
- *                                  saved raw as RAM:cam-0001.yuy2. H264: no
- *                                  sequence gap allowed, saved as one stream,
- *                                  RAM:cam.h264
+ *                                  frame must be exactly uvq_MaxFrameSize.
+ *                                  H264: no sequence gap allowed
  *   USBVideoTest FORMAT=H264 BITRATE=1000000 KEYFRAME=2000 FRAMES=300
  *                                  ... with encoder bit rate (bit/s) and key
  *                                  frame interval (ms). Only H264 modes of a
@@ -39,9 +38,9 @@
  *                                  check the offered sizes against the mode
  *                                  table, then grab FRAMES pictures (default
  *                                  30) at the size nearest WIDTH x HEIGHT
- *                                  (default mode if omitted); TO saves them.
- *                                  The driver delivers JPEG, or YUY2 if the
- *                                  camera has no MJPG; YUY2 is not saved
+ *                                  (default mode if omitted). The driver
+ *                                  delivers JPEG, or YUY2 if the camera has no
+ *                                  MJPG
  *   USBVideoTest PREVIEW           run the stream process of USBVideo: FRAMES
  *                                  (default 300) through the decoder into its
  *                                  window, which moves and changes size on the
@@ -238,7 +237,7 @@ static BOOL captureFrames(struct UvcCamera *cm, struct UsbVideoModeReq *uvq, ULO
        and key frame count; VP8 = variable size, not checked; any other =
        fixed size uvq_MaxFrameSize */
     BOOL isjpeg = (uvq->uvq_FourCC == UVFCC_MJPG);
-    BOOL isstream = uvcIsStream(uvq->uvq_FourCC);
+    BOOL isstream = uvq->uvq_FourCC == UVFCC_H264;
     BOOL isfixed = !isjpeg && !isstream && (uvq->uvq_FourCC != UVFCC_VP80);
     BOOL nostart = FALSE;
     ULONG keyframes = 0;
@@ -416,7 +415,7 @@ static BOOL captureFrames(struct UvcCamera *cm, struct UsbVideoModeReq *uvq, ULO
                 PutStr("\n");
             }
             printDeviceStats(cm->cm_Request);
-            uvcPrintSaved(&cp.cp_Files);
+            uvcPrintSaved(&cp.cp_Recording);
         }
         if(interrupted)
         {
@@ -612,11 +611,10 @@ static BOOL completeJpegSize(const UBYTE *jpeg, ULONG len, ULONG *width, ULONG *
    MJPG) or three YUV planes, at the size VHI_CHECK_DIGITIZE_SIZE reported.
    Return the failure reason, NULL on success. */
 static STRPTR takeVhiPictures(struct Library *VHIBase, APTR handle, ULONG askwidth, ULONG askheight,
-                              const struct UsbVideoMode *def, ULONG frames, STRPTR stem)
+                              const struct UsbVideoMode *def, ULONG frames)
 {
     BOOL isjpeg = (def->uvm_FourCC == UVFCC_MJPG);
     struct vhi_digitize dig;
-    struct UvcFiles files;
     ULONG vhierr = 0;
     ULONG got = 0;
     ULONG bad = 0;
@@ -643,11 +641,6 @@ static STRPTR takeVhiPictures(struct Library *VHIBase, APTR handle, ULONG askwid
     dig.CstAllocVec = programAllocVec;
     dig.CstFreeVec = programFreeVec;
     VhiAllocs = 0;
-    /* only JPEG pictures are saved, YUV planes are not */
-    if(!uvcOpenFiles(&files, isjpeg ? stem : NULL, UVFCC_MJPG))
-    {
-        return "could not save";
-    }
     while(!why && (got < frames))
     {
         struct vhi_image *img;
@@ -692,10 +685,6 @@ static STRPTR takeVhiPictures(struct Library *VHIBase, APTR handle, ULONG askwid
             Printf("picture %ld is %ldx%ld\n", got, width, height);
             why = "a picture did not have the size the driver said it would";
         }
-        else if(!uvcWriteFrame(&files, jpeg, len))
-        {
-            why = "could not save";
-        }
         FreeVec(jpeg);
         FreeVec(img->y);
         FreeVec(img->u);
@@ -724,8 +713,6 @@ static STRPTR takeVhiPictures(struct Library *VHIBase, APTR handle, ULONG askwid
     }
     Printf("; average %ld bytes; %ld not a %s\n", got ? bytes / got : 0, bad,
            isjpeg ? "complete JPEG file" : "picture in three planes");
-    uvcCloseFiles(&files);
-    uvcPrintSaved(&files);
     if(!why && bad)
     {
         why = isjpeg ? "pictures that are not complete JPEG files" : "pictures that are not three planes";
@@ -757,7 +744,7 @@ static const struct UsbVideoMode *findMode(const struct UsbVideoMode *table, ULO
 }
 
 static BOOL testVhiDriver(ULONG input, const struct UsbVideoMode *table, ULONG tablesize,
-                          ULONG width, ULONG height, ULONG frames, STRPTR stem)
+                          ULONG width, ULONG height, ULONG frames)
 {
     struct Library *VHIBase;
     struct vhi_size size = { 0, 0, FALSE, FALSE };
@@ -894,15 +881,15 @@ static BOOL testVhiDriver(ULONG input, const struct UsbVideoMode *table, ULONG t
        step is a mode switch */
     if(!why)
     {
-        why = takeVhiPictures(VHIBase, handle, smallest->uvm_Width, smallest->uvm_Height, def, 1, NULL);
+        why = takeVhiPictures(VHIBase, handle, smallest->uvm_Width, smallest->uvm_Height, def, 1);
     }
     if(!why)
     {
-        why = takeVhiPictures(VHIBase, handle, largest->uvm_Width, largest->uvm_Height, def, 1, NULL);
+        why = takeVhiPictures(VHIBase, handle, largest->uvm_Width, largest->uvm_Height, def, 1);
     }
     if(!why)
     {
-        why = takeVhiPictures(VHIBase, handle, width, height, def, frames, stem);
+        why = takeVhiPictures(VHIBase, handle, width, height, def, frames);
     }
     vhi_api(VHI_METHOD_CLOSE, 0, NULL, &vhierr, handle);
     CloseLibrary(VHIBase);
@@ -1841,7 +1828,7 @@ static BOOL runTest(struct UvcCamera *cm)
     }
     if(ArgsArray[ARGS_VHI])
     {
-        return testVhiDriver(cm->cm_Unit, cm->cm_Modes, cm->cm_ModesSize, width, height, frames ? frames : 30, stem);
+        return testVhiDriver(cm->cm_Unit, cm->cm_Modes, cm->cm_ModesSize, width, height, frames ? frames : 30);
     }
     if(preview)
     {

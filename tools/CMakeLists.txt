@@ -20,9 +20,10 @@ endforeach()
 # uvc_client.c: what a client of usbvideo.device does (commands, mode list, reads, files).
 # uvc_preview.c: a camera run by a process of its own, with a preview window.
 # mjpegdht.h is the VHI driver's; the JPEG files saved are completed with it.
+# mkv/ is the mkv-writer submodule, the Matroska muxer.
 foreach(t USBVideo USBVideoTest)
-    target_sources(${t} PRIVATE uvc_client.c uvc_preview.c)
-    target_include_directories(${t} PRIVATE ${CMAKE_SOURCE_DIR}/vhi)
+    target_sources(${t} PRIVATE uvc_client.c uvc_preview.c mkv/mkv.c)
+    target_include_directories(${t} PRIVATE ${CMAKE_SOURCE_DIR}/vhi ${CMAKE_CURRENT_SOURCE_DIR}/mkv)
 endforeach()
 
 # The window. MUI is opened at run time: USBVideo in the Shell runs without it.

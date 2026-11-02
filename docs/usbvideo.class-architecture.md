@@ -448,12 +448,12 @@ Details: [uvc/notes/vhi-notes.md](uvc/notes/vhi-notes.md).
 - **No decoder**: cAMIra takes `VHI_JPEG`. A camera without MJPEG gets YUY2 sorted into the planes
   of `VHI_YUV_422` without arithmetic (never run).
 
-**Tools**: `USBVideo` is the user tool: in the Shell it gives info, modes, frames or an H.264 stream
-to files; from its icon or with `GUI` it is a MUI window (`tools/usbvideo_gui.c`, MUI opened at run
-time); with `PREVIEW` it shows the stream without MUI. `USBVideoTest` is the test bench, built but
-not shipped (each test ends in PASS or FAIL). Both use `tools/uvc_client.c` (camera, capture loop,
-reads, files), `tools/uvc_preview.c` (the stream process) and `vhi/mjpegdht.h` (standard Huffman
-tables, frame checks).
+**Tools**: `USBVideo` is the user tool: in the Shell it gives info and modes, and records H.264 or
+MJPEG into one Matroska file; from its icon or with `GUI` it is a MUI window (`tools/usbvideo_gui.c`, MUI opened at run time); with `PREVIEW` it shows the stream without
+MUI. `USBVideoTest` is the test bench, built but not shipped (each test ends in PASS or FAIL). Both
+use `tools/uvc_client.c` (camera, capture loop, reads, files), `tools/uvc_preview.c` (the stream
+process), `vhi/mjpegdht.h` (standard Huffman tables, frame checks) and `tools/mkv` (the Matroska
+muxer, the mkv-writer submodule).
 
 **The stream process** (`tools/uvc_preview.c`) runs a camera for the tools: reads, decoder, preview
 window, files. Pixels stay out of the class; this is where they are. The reasons, because each
@@ -481,6 +481,15 @@ guards a failure:
   After a hole its pictures are rubbish until the next one, so the first frame after a hole asks the
   camera for a key frame (`UVCX_PICTURE_TYPE_CONTROL`), if it has the H.264 unit; the C930e sends it
   two frames later, whatever its key interval.
+- **A recording is Matroska**, of H.264, MJPEG, YUY2 or NV12, and nothing else is saved: no single
+  frames (`uvcStartRecording`, `uvcRecordFrame`; the capture holds it). Raw frames go in as they
+  come, `V_UNCOMPRESSED` with the FourCC, and only whole ones. Each recording makes a new file at
+  the first free number, so none is written over, and stopping finishes it; a file cut short still
+  plays. The muxer counts to 4 GiB, so 64 MiB short of that the recording goes on in the next file:
+  YUY2 at 640x480 fills one in under 4 minutes. H.264 waits there for a key frame, asked for. H.264 begins at a key frame, which the camera is asked
+  for. A frame's time comes from `ivr_PTS`, with the clock the mode states, not from the sequence
+  number: in poor light the C930e falls to 24 fps, and counting frames would make the file play fast. What waits
+  goes to the disk after each frame, so a slow disk costs frames.
 - **Only the newest picture is drawn,** and only if `AttemptLockLayerRom()` gets the layer: a slow or
   locked window costs pictures, never delay and never a read. A held menu does lock it on 3.2: over
   3.4 s of one, 102 pictures went undrawn during an H.264 stream and no frame was lost. The session's
