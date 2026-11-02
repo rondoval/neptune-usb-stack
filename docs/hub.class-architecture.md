@@ -128,7 +128,7 @@ sequenceDiagram
 
     CORE->>DISP: UCM_AttemptDeviceBinding (device class is HUB)
     DISP->>T: spawn, then wait (borrowing the caller's locks)
-    T->>T: pick interface (multi-TT preferred), open EP0/EP1, read hub descriptor
+    T->>T: pick interface (multi-TT preferred; single TT if the switch fails), open EP0/EP1, read hub descriptor
     T->>T: publish hub facts (ports, multi-TT, think time), power ports
     T-->>DISP: ready (success = task is running)
     DISP-->>CORE: binding

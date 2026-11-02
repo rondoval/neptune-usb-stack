@@ -1164,8 +1164,27 @@ struct NepClassHub * nAllocHub(void)
                                 PPA_NakTimeout, TRUE,
                                 PPA_NakTimeoutTime, 1000,
                                 TAG_END);
-                    psdSetAltInterface(nch->nch_EP0Pipe, nch->nch_Interface);
-                    if((nch->nch_EP1Pipe = psdAllocPipe(nch->nch_Device, nch->nch_TaskMsgPort, nch->nch_EP1)))
+                    if(!psdSetAltInterface(nch->nch_EP0Pipe, nch->nch_Interface))
+                    {
+                        /* The multi-TT alternate did not take: the hub stays on the
+                           current one, single TT, with that one's status endpoint -
+                           the other's token is gone with the switch back. */
+                        nch->nch_Interface = psdFindInterface(nch->nch_Device, NULL,
+                                                              IFA_Class, HUB_CLASSCODE,
+                                                              TAG_END);
+                        nch->nch_EP1 = nch->nch_Interface ?
+                                       psdFindEndpoint(nch->nch_Interface, NULL,
+                                                       EA_IsIn, TRUE,
+                                                       EA_TransferType, USEAF_INTERRUPT,
+                                                       TAG_END) : NULL;
+                        if(!nch->nch_EP1)
+                        {
+                            psdAddErrorMsg(RETURN_FAIL, (STRPTR) libname,
+                                           "No endpoints defined on the current alternate.");
+                        }
+                    }
+                    if(nch->nch_EP1 &&
+                       (nch->nch_EP1Pipe = psdAllocPipe(nch->nch_Device, nch->nch_TaskMsgPort, nch->nch_EP1)))
                     {
                         psdSetAttrs(PGA_PIPE, nch->nch_EP1Pipe,
                                     PPA_AllowRuntPackets, TRUE,
