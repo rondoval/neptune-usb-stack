@@ -98,8 +98,9 @@ Tested with a Logitech C930e, up to 1920x1080 at 30 frames a second.
   until Ctrl-C. From its icon, or with `USBVideo GUI`, it opens a window (needs MUI) to pick a
   camera and a mode, record, and open the camera's settings.
 * **A live picture from the camera:** with `videocodec.library` installed (PiStorm on a
-  Raspberry Pi 4 or CM4) and a Picasso96 Workbench, starting an MJPEG or H.264 mode opens a
-  second window with the picture, decoded by the VideoCore. Drag its corner to any size.
+  Raspberry Pi 4 or CM4) and a Picasso96 Workbench, starting an MJPEG, H.264, YUY2 or NV12 mode
+  opens a second window with the picture, made by the VideoCore (YUY2 and NV12 look a little flat:
+  the VideoCore reads their colours as full range). Drag its corner to any size.
   `USBVideo PREVIEW` does the same from the Shell, without MUI. If the picture never comes, the
   VideoCore is short of memory: raise `gpu_mem` in `config.txt`.
 * **The camera's microphone** shows up as an AHI recording mode, and an idle camera is

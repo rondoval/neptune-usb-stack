@@ -163,7 +163,8 @@ Each is `DEVS:USBClasses/<name>.usbclass`.
   `USBRocket`, `USBPowMan`, `USBUPS`, `USBVideo`.
 - **USBVideo** works in the Shell, or from its icon as a window: pick a camera and a mode,
   record video, and open the camera's settings. With `videocodec.library` (PiStorm
-  on a Raspberry Pi 4 or CM4) it shows the live picture of an MJPEG or H.264 mode.
+  on a Raspberry Pi 4 or CM4) it shows the live picture of an MJPEG, H.264, YUY2 or NV12
+  mode.
 - **`neptune.vhi`** (optional, `LIBS:VHI/`) lets VHI programs such as cAMIra use USB webcams.
 
 ## Known limitations

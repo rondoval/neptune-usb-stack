@@ -4,13 +4,15 @@
  *----------------------------------------------------------------------------
  * Implements uvc_preview.h.
  *
- * The memory of the frames is ours, not the decoder's: reads fill it and
- * VC_ImportPacket() lends it to the session, with no copy. So a read never
- * points into memory a session frees, the session can fail and the stream
- * carry on saving, and a stream without a decoder is the same stream.
+ * The memory of the frames is ours, not the session's: reads fill it and
+ * VC_ImportPacket() (a decoder's, MJPEG and H.264) or VC_ImportFrame() (a
+ * converter's, the uncompressed formats) lends it to the session, with no
+ * copy. So a read never points into memory a session frees, the session can
+ * fail and the stream carry on saving, and a stream without a session is the
+ * same stream.
  *
  * A read's buffer goes round: at the device, in hand (saved, made ready), at
- * the decoder, back to the device. Stopping keeps one order: CMD_STOP, reads
+ * the session, back to the device. Stopping keeps one order: CMD_STOP, reads
  * taken back, session closed, then the buffers freed.
  *
  * The loop empties every source before it waits, and never blocks on a
@@ -38,6 +40,8 @@
 #include <string.h>
 
 #include "uvc_preview.h"
+#include "uvc_record.h"
+#include "mjpegdht.h"
 
 #define STREAM_NAME    "USBVideo stream"
 #define STREAM_STACK   16384
@@ -48,10 +52,11 @@
 #define MIN_ROWS       16
 #define MIN_WIDTH      128  /* of the window */
 #define MIN_HEIGHT     80
-#define VC_REVISION    3    /* videocodec.library 0.3: the first with these sessions */
+#define VC_REVISION    4    /* videocodec.library 0.4: the first with converters' InputFormats */
 #define P96_VERSION    2
 #define USUAL_INTERVAL (UVC_INTERVAL_UNITS / 30) /* should a camera give none */
-#define SILENT_SECS    5    /* of frames sent with no picture back: the decoder lacks memory */
+#define SILENT_SECS    5    /* of frames sent with no picture back: the VideoCore lacks memory */
+#define JPEG_ROOM      MJPEG_STD_DHT_SIZE /* free before an MJPEG frame: SOI and the standard tables go there */
 
 /* Commands */
 enum
@@ -72,12 +77,22 @@ struct UvpCommand
     BOOL           cmd_Ok;
 };
 
-/* A Picasso96 pixel format the decoder writes */
+/* A Picasso96 pixel format the session writes */
 struct PixelFormat
 {
     RGBFTYPE pf_RGB;
     ULONG    pf_VC;    /* VCF_ */
     ULONG    pf_Bytes; /* per pixel */
+};
+
+/* How a camera format is shown: a decoder's packets, or a converter's frames */
+struct PreviewPath
+{
+    ULONG pp_FourCC; /* UVFCC_ */
+    ULONG pp_Kind;   /* VCK_ */
+    ULONG pp_Codec;  /* VCC_ */
+    ULONG pp_Input;  /* a converter's: the camera's frames as a VCF_ */
+    ULONG pp_Bytes;  /* a converter's: bytes per pixel of the first plane */
 };
 
 struct UvcPreview
@@ -101,12 +116,12 @@ struct UvcPreview
     UBYTE                  up_Why[UVC_TEXT_SIZE];
 
     /* saving */
-    BOOL  up_Recording;
-    BOOL  up_RecordWaits; /* for a key frame */
-    ULONG up_KeyAsked;    /* times a key frame was wanted since the last one came */
+    struct UvcRecording up_Recording;
+    ULONG               up_KeyAsked; /* times the decoder wanted a key frame since the last one came */
 
-    /* the decoder */
-    struct VCSession *up_Session;
+    /* the session: a decoder or a converter */
+    const struct PreviewPath *up_Path; /* NULL: the mode has no preview */
+    struct VCSession         *up_Session;
 
     /* the window */
     struct Window            *up_Window;
@@ -130,23 +145,31 @@ static const struct PixelFormat PixelFormats[] =
     { RGBFB_R8G8B8A8, VCF_RGBA32, 4 }
 };
 
+static const struct PreviewPath PreviewPaths[] =
+{
+    { UVFCC_MJPG, VCK_Decoder, VCC_MJPEG, 0, 0 },
+    { UVFCC_H264, VCK_Decoder, VCC_H264, 0, 0 },
+    { UVFCC_YUY2, VCK_Converter, VCC_Raw, VCF_YUYV, 2 },
+    { UVFCC_NV12, VCK_Converter, VCC_Raw, VCF_NV12, 1 }
+};
+
 /*
  * Words
  */
 
 /* Return a VCERR_ as text */
-static const char *decoderErrorText(LONG err)
+static const char *sessionErrorText(LONG err)
 {
     switch(err)
     {
         case VCERR_NOMEM:       return "not enough memory";
         case VCERR_DEVMEM:      return "the VideoCore is out of memory: raise gpu_mem in config.txt";
-        case VCERR_NOBACKEND:   return "no videocodec backend decodes this";
+        case VCERR_NOBACKEND:   return "no videocodec backend shows this format";
         case VCERR_UNSUPPORTED: return "the hardware cannot do this";
         case VCERR_STREAM:      return "the decoder refused the stream";
         case VCERR_TRANSPORT:   return "the link to the VideoCore failed";
     }
-    return "the decoder failed";
+    return "the VideoCore failed";
 }
 
 /* The caller wants to know: the stream ended, or the preview did */
@@ -394,7 +417,7 @@ static BOOL openWindow(struct UvcPreview *up, ULONG written)
     if(!up->up_Format)
     {
         UnlockPubScreen(NULL, scr);
-        uvcReport("No preview: the decoder writes no format Picasso96 knows");
+        uvcReport("No preview: the VideoCore writes no format Picasso96 knows");
         return FALSE;
     }
 
@@ -437,8 +460,26 @@ static BOOL openWindow(struct UvcPreview *up, ULONG written)
 }
 
 /*
- * The decoder
+ * The session
  */
+
+/* How a camera format is shown, NULL if it cannot be */
+static const struct PreviewPath *previewPath(ULONG fourcc)
+{
+    for(ULONG cnt = 0; cnt < sizeof(PreviewPaths) / sizeof(PreviewPaths[0]); cnt++)
+    {
+        if(PreviewPaths[cnt].pp_FourCC == fourcc)
+        {
+            return &PreviewPaths[cnt];
+        }
+    }
+    return NULL;
+}
+
+BOOL uvpCanPreview(ULONG fourcc)
+{
+    return previewPath(fourcc) != NULL;
+}
 
 /* Open what a preview needs, if that is not done. FALSE with the reason kept
    if it cannot be: a later start looks again, and says so again. */
@@ -465,8 +506,9 @@ static BOOL openLibraries(struct UvcPreview *up)
     return VideoCodecBase != NULL;
 }
 
-/* The pixel formats the decoder for codec writes, VCF_MASK()s; 0 for none */
-static ULONG decoderFormats(ULONG codec)
+/* The pixel formats a session of the path writes, VCF_MASK()s; 0 if no
+   backend has one, or no converter reads the camera's format */
+static ULONG sessionFormats(const struct PreviewPath *pp)
 {
     for(ULONG index = 0; ; index++)
     {
@@ -477,9 +519,10 @@ static ULONG decoderFormats(ULONG codec)
         {
             return 0;
         }
-        if((info.Codec == codec) && (info.Kind == VCK_Decoder) && (info.Flags & VCCF_Session))
+        if((info.Codec == pp->pp_Codec) && (info.Kind == pp->pp_Kind) && (info.Flags & VCCF_Session) &&
+           (!pp->pp_Input || (info.InputFormats & VCF_MASK(pp->pp_Input))))
         {
-            return info.Formats;
+            return info.OutputFormats;
         }
     }
 }
@@ -502,15 +545,49 @@ static void closePreview(struct UvcPreview *up)
     }
 }
 
+/* Lend a read's buffer of that many bytes to the session: a decoder's packet
+   or a converter's frame, each knowing its read. FALSE if it is refused.
+   The two point at each other for the buffer's whole life: sendFrame()
+   finds the object from the read, and the item that gives the object back
+   (VCIT_PacketReturned, VCIT_FrameReturned) finds the read to send to the
+   device again. */
+static BOOL importRead(struct UvcPreview *up, struct UvcRead *rd, ULONG bytes)
+{
+    if(up->up_Path->pp_Input)
+    {
+        /* a frame's size is the picture's, which the session was opened
+           with (VCA_Width, VCA_Height, VCA_InputFormat, VCA_InputPitch) */
+        struct VCFrame *frame = VC_ImportFrame(up->up_Session, VCS_Input, rd->rd_Buffer);
+
+        if(frame)
+        {
+            frame->UserData = rd;
+        }
+        rd->rd_UserData = frame;
+    } else {
+        /* a packet holds as much as the buffer: an MJPEG's room in front of
+           the largest frame */
+        struct VCPacket *packet = VC_ImportPacket(up->up_Session, VCS_Input, rd->rd_Buffer, bytes);
+
+        if(packet)
+        {
+            packet->UserData = rd;
+        }
+        rd->rd_UserData = packet;
+    }
+    return rd->rd_UserData != NULL;
+}
+
 /* Open the window and a session for the mode in force, and lend it the
    reads' buffers of that many bytes. FALSE with the reason kept. */
-static BOOL openPreview(struct UvcPreview *up, ULONG codec, ULONG bytes)
+static BOOL openPreview(struct UvcPreview *up, ULONG bytes)
 {
-    ULONG written = decoderFormats(codec);
+    const struct PreviewPath *pp = up->up_Path;
+    ULONG written = sessionFormats(pp);
 
     if(!written)
     {
-        uvcReport("No preview: %s", decoderErrorText(VCERR_NOBACKEND));
+        uvcReport("No preview: %s", sessionErrorText(VCERR_NOBACKEND));
         return FALSE;
     }
     if(!openWindow(up, written))
@@ -519,35 +596,42 @@ static BOOL openPreview(struct UvcPreview *up, ULONG codec, ULONG bytes)
     }
 
     LONG err = 0;
+    BOOL convert = pp->pp_Input != 0;
+    /* a decoder's packets hold whole pictures; a converter's frames are the camera's pictures as they come */
+    struct TagItem tags[] =
+    {
+        { VCA_Codec, pp->pp_Codec },
+        { VCA_Kind, pp->pp_Kind },
+        { VCA_SigMask, 1UL << up->up_CmdPort->mp_SigBit },
+        { convert ? TAG_IGNORE : VCA_Framed, TRUE },
+        { convert ? VCA_Width : TAG_IGNORE, up->up_Mode.uvq_Width },
+        { convert ? VCA_Height : TAG_IGNORE, up->up_Mode.uvq_Height },
+        { convert ? VCA_InputFormat : TAG_IGNORE, pp->pp_Input },
+        { convert ? VCA_InputPitch : TAG_IGNORE, up->up_Mode.uvq_Width * pp->pp_Bytes },
+        { VCA_FrameRateNum, UVC_INTERVAL_UNITS },
+        { VCA_FrameRateDen, up->up_Interval },
+        { VCA_OutputFormat, up->up_Format->pf_VC },
+        { VCA_OutputWidth, up->up_Picture.Width },
+        { VCA_OutputHeight, up->up_Picture.Height },
+        { VCA_OutputPitch, up->up_Picture.Width * up->up_Format->pf_Bytes },
+        { VCA_OutputCount, PREVIEW_FRAMES },
+        { VCA_ErrorPtr, (IPTR) &err },
+        { TAG_DONE, 0 }
+    };
 
-    up->up_Session = VC_OpenSessionTags(VCA_Codec, codec, VCA_Kind, VCK_Decoder,
-                                        VCA_SigMask, 1UL << up->up_CmdPort->mp_SigBit,
-                                        VCA_Framed, TRUE,
-                                        VCA_FrameRateNum, UVC_INTERVAL_UNITS, VCA_FrameRateDen, up->up_Interval,
-                                        VCA_OutputFormat, up->up_Format->pf_VC,
-                                        VCA_OutputWidth, up->up_Picture.Width,
-                                        VCA_OutputHeight, up->up_Picture.Height,
-                                        VCA_OutputPitch, up->up_Picture.Width * up->up_Format->pf_Bytes,
-                                        VCA_OutputCount, PREVIEW_FRAMES,
-                                        VCA_ErrorPtr, (IPTR) &err,
-                                        TAG_DONE);
+    up->up_Session = VC_OpenSessionTagList(tags);
     if(!up->up_Session)
     {
-        uvcReport("No preview: %s", decoderErrorText(err));
+        uvcReport("No preview: %s", sessionErrorText(err));
         return FALSE;
     }
-    for(ULONG cnt = 0; cnt < UVC_NUM_READS; cnt++)
+    UVC_EACH_READ(rd, &up->up_Capture)
     {
-        struct UvcRead *rd = &up->up_Capture.cp_Reads[cnt];
-        struct VCPacket *packet = VC_ImportPacket(up->up_Session, VCS_Input, rd->rd_Buffer, bytes);
-
-        if(!packet)
+        if(!importRead(up, rd, bytes))
         {
-            uvcReport("No preview: the decoder did not take the buffers");
+            uvcReport("No preview: the VideoCore did not take the buffers");
             return FALSE;
         }
-        packet->UserData = rd;
-        rd->rd_UserData = packet;
     }
     return TRUE;
 }
@@ -556,7 +640,7 @@ static BOOL openPreview(struct UvcPreview *up, ULONG codec, ULONG bytes)
    the device. */
 static void dropPreview(struct UvcPreview *up, LONG err)
 {
-    uvcReport("No more preview: %s", decoderErrorText(err));
+    uvcReport("No more preview: %s", sessionErrorText(err));
     closePreview(up);
     uvcSendReads(&up->up_Capture);
     tellCaller(up);
@@ -580,29 +664,81 @@ static void askKeyFrame(struct UvcPreview *up)
     }
 }
 
-/* Send a frame to the decoder. FALSE if it does not go there: the buffer is
-   still in hand, unless the decoder was lost and took it along. */
+/* A camera's frame of len bytes that lies JPEG_ROOM bytes into buffer
+   becomes a JPEG that begins at buffer, without moving it: the room and the
+   frame's own two SOI bytes are written over, ending just before the
+   frame's next marker. What fills them is a new SOI, then the standard
+   Huffman tables if the frame has none (they may come before the frame
+   header), else a comment of the same length, so the sizes come out alike.
+   The comment's bytes are what the room held, uvcMakeReads() cleared it, or
+   old tables. Return the JPEG's length; 0 if the frame is not to be decoded,
+   left as it was. */
+static ULONG jpegFill(UBYTE *buffer, ULONG len)
+{
+    static const UBYTE comment[] = { 0xff, 0xd8, 0xff, 0xfe, (JPEG_ROOM - 2) >> 8, (JPEG_ROOM - 2) & 0xff };
+    const UBYTE *frame = buffer + JPEG_ROOM;
+    ULONG end = uvcJpegLength(frame, len);
+
+    if(!end)
+    {
+        return 0;
+    }
+    if(mjpegMissingDHT(frame, end))
+    {
+        buffer[0] = 0xff;
+        buffer[1] = 0xd8;
+        memcpy(&buffer[2], MJPEGStdDHT, MJPEG_STD_DHT_SIZE);
+    } else {
+        memcpy(buffer, comment, sizeof(comment));
+    }
+    return end + JPEG_ROOM;
+}
+
+/* Send a frame to the session. FALSE if it does not go there: the buffer is
+   still in hand, unless the session was lost and took it along. A decoder
+   gives its input back at once; a converter only once its picture is out,
+   which a window changing size stops for a while, so it gets a frame only
+   while UVC_KEEP_READS stay at the device: a picture is lost, never a
+   frame. */
 static BOOL sendFrame(struct UvcPreview *up, struct UvcRead *rd)
 {
     struct IOVideoReq *ivr = rd->rd_Req;
-    struct VCPacket *packet = rd->rd_UserData;
     struct UvpCounts *uc = &up->up_Counts;
     ULONG length = ivr->ivr_Std.io_Actual;
+    VCTime pts = (VCTime) ivr->ivr_Sequence * (up->up_Interval / 10);
 
     if(up->up_Mode.uvq_FourCC == UVFCC_MJPG)
     {
-        length = uvcJpegFill(rd->rd_Buffer, length);
+        length = jpegFill(rd->rd_Buffer, length);
+    }
+    else if(up->up_Path->pp_Input &&
+            ((length != up->up_Mode.uvq_MaxFrameSize) || (uvcReadsAtDevice(&up->up_Capture) < UVC_KEEP_READS)))
+    {
+        length = 0; /* a converter takes whole pictures only, and only so many */
     }
     if(!length)
     {
         uc->uc_Held++;
         return FALSE;
     }
-    packet->Length = length;
-    packet->Flags = VCPF_FrameStart | VCPF_FrameEnd;
-    packet->Pts = (VCTime) ivr->ivr_Sequence * (up->up_Interval / 10);
 
-    LONG err = VC_SendPacket(up->up_Session, packet);
+    LONG err;
+
+    if(up->up_Path->pp_Input)
+    {
+        struct VCFrame *frame = rd->rd_UserData;
+
+        frame->Pts = pts;
+        frame->Flags = 0;
+        err = VC_SendFrame(up->up_Session, frame);
+    } else {
+        struct VCPacket *packet = rd->rd_UserData;
+
+        packet->Length = length;
+        packet->Flags = VCPF_FrameStart | VCPF_FrameEnd;
+        packet->Pts = pts;
+        err = VC_SendPacket(up->up_Session, packet);
+    }
 
     if(err)
     {
@@ -611,10 +747,10 @@ static BOOL sendFrame(struct UvcPreview *up, struct UvcRead *rd)
     }
     uc->uc_Sent++;
 
-    /* the decoder gives no error for this: it just never answers */
+    /* the VideoCore gives no error for this: it just never answers */
     if(!uc->uc_Pictures && (uc->uc_Sent == SILENT_SECS * framesPerSecond(up)))
     {
-        uvcReport("No picture from the decoder: raise gpu_mem in config.txt");
+        uvcReport("No picture from the VideoCore: raise gpu_mem in config.txt");
         tellCaller(up);
     }
     return TRUE;
@@ -652,6 +788,10 @@ static void pollSession(struct UvcPreview *up)
                 uvcSendRead(item.u.Packet->UserData);
                 break;
 
+            case VCIT_FrameReturned:
+                uvcSendRead(item.u.Frame->UserData);
+                break;
+
             case VCIT_Frame:
                 pictureIn(up, item.u.Frame);
                 break;
@@ -676,7 +816,7 @@ static void stopStream(struct UvcPreview *up)
     uvcHaltCapture(&up->up_Capture);
     closePreview(up);
     uvcStopCapture(&up->up_Capture);
-    up->up_Recording = FALSE;
+    uvcStopRecording(&up->up_Recording);
 }
 
 /* Set the mode, get the reads ready, preview if there can be one, start.
@@ -691,24 +831,21 @@ static BOOL startStream(struct UvcPreview *up, const struct UsbVideoModeReq *uvq
     up->up_KeyAsked = 0;
     up->up_Mode = *uvq;
 
-    LONG err = uvcCommand(cm->cm_Request, NSCMD_UV_SETMODE, &up->up_Mode, sizeof(up->up_Mode));
-
-    if(err)
+    if(uvcSetMode(cm, &up->up_Mode))
     {
-        uvcReport("Could not set that mode: %s", uvcErrorText(err));
         return FALSE;
     }
 
-    ULONG fourcc = up->up_Mode.uvq_FourCC;
-    ULONG codec = (fourcc == UVFCC_MJPG) ? VCC_MJPEG : (fourcc == UVFCC_H264) ? VCC_H264 : VCC_None;
-    BOOL preview = codec && openLibraries(up);
-    ULONG room = (codec == VCC_MJPEG) ? UVC_JPEG_ROOM : 0;
+    up->up_Path = previewPath(up->up_Mode.uvq_FourCC);
+
+    BOOL preview = up->up_Path && openLibraries(up);
+    ULONG room = (up->up_Mode.uvq_FourCC == UVFCC_MJPG) ? JPEG_ROOM : 0;
     ULONG size = up->up_Mode.uvq_MaxFrameSize;
 
     up->up_Interval = up->up_Mode.uvq_Interval ? up->up_Mode.uvq_Interval : USUAL_INTERVAL;
-    if(!codec)
+    if(!up->up_Path)
     {
-        uvcReport("No preview: only MJPEG and H.264 can be decoded");
+        uvcReport("No preview: only MJPEG, H.264, YUY2 and NV12 can be shown");
     }
 
     /* the buffers go to the VPU */
@@ -716,7 +853,7 @@ static BOOL startStream(struct UvcPreview *up, const struct UsbVideoModeReq *uvq
 
     if(ok)
     {
-        if(preview && !openPreview(up, codec, room + size))
+        if(preview && !openPreview(up, room + size))
         {
             closePreview(up);
         }
@@ -729,32 +866,15 @@ static BOOL startStream(struct UvcPreview *up, const struct UsbVideoModeReq *uvq
     return ok;
 }
 
-/* Record a frame, if a recording runs */
-static void recordFrame(struct UvcPreview *up, const struct UvcRead *rd, BOOL key)
+/* Record a frame, if a recording runs; a failed one ends, the caller told */
+static void recordFrame(struct UvcPreview *up, const struct UvcRead *rd)
 {
-    struct UvcCapture *cp = &up->up_Capture;
-    const struct IOVideoReq *ivr = rd->rd_Req;
-
-    if(!up->up_Recording)
+    if(uvcRecordFrame(&up->up_Recording, rd->rd_Req))
     {
+        up->up_Counts.uc_Saved = up->up_Recording.rc_Saved;
         return;
     }
-    if(up->up_RecordWaits)
-    {
-        if(!key)
-        {
-            askKeyFrame(up);
-            return;
-        }
-        up->up_RecordWaits = FALSE;
-    }
-    if(uvcRecordFrame(&cp->cp_Recording, ivr))
-    {
-        up->up_Counts.uc_Saved = cp->cp_Recording.rc_Saved;
-        return;
-    }
-    up->up_Recording = FALSE;
-    uvcStopRecording(&cp->cp_Recording);
+    uvcStopRecording(&up->up_Recording);
     tellCaller(up);
 }
 
@@ -767,7 +887,7 @@ static void frameIn(struct UvcPreview *up, struct UvcRead *rd)
     ULONG len = ivr->ivr_Std.io_Actual;
     BOOL h264 = up->up_Mode.uvq_FourCC == UVFCC_H264;
     BOOL key = h264 && uvcH264Key(ivr->ivr_Std.io_Data, len);
-    ULONG lost = cp->cp_Missed + cp->cp_TooLong;
+    ULONG lost = uvcLost(cp);
 
     uc->uc_Frames++;
     uc->uc_Bytes += len;
@@ -784,7 +904,7 @@ static void frameIn(struct UvcPreview *up, struct UvcRead *rd)
         askKeyFrame(up); /* after a hole the decoder gives rubbish until one comes */
     }
     uc->uc_Lost = lost;
-    recordFrame(up, rd, key);
+    recordFrame(up, rd);
     if((!up->up_Session || !sendFrame(up, rd)) && !rd->rd_AtDevice)
     {
         uvcSendRead(rd);
@@ -897,20 +1017,9 @@ static BOOL obey(struct UvcPreview *up, struct UvpCommand *cmd)
             return TRUE;
 
         case UVPC_RECORD:
-            up->up_Recording = FALSE;
-            uvcStopRecording(&up->up_Capture.cp_Recording);
-            if(!cmd->cmd_Data)
-            {
-                return TRUE;
-            }
-            if(!uvpRunning(up) ||
-               !uvcStartRecording(&up->up_Capture.cp_Recording, &up->up_Camera, up->up_Stem, &up->up_Mode))
-            {
-                return FALSE;
-            }
-            up->up_RecordWaits = up->up_Mode.uvq_FourCC == UVFCC_H264;
-            up->up_Recording = TRUE;
-            return TRUE;
+            uvcStopRecording(&up->up_Recording);
+            return !cmd->cmd_Data ||
+                   (uvpRunning(up) && uvcStartRecording(&up->up_Recording, &up->up_Camera, up->up_Stem, &up->up_Mode));
 
         case UVPC_SETTINGS:
         {

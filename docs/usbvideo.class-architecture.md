@@ -9,7 +9,7 @@
 > the clock-driven iso hooks it relies on are in
 > [neptune-context-hcd-abi.md](neptune-context-hcd-abi.md) §10.3. Sources: `classes/video/`,
 > `include/devices/usb_video.h` (wire), `include/devices/usbvideodevice.h` (public), `vhi/`,
-> `tools/USBVideo.c`, `usbvideo_gui.c`, `USBVideoTest.c`, `uvc_client.c`, `uvc_preview.c`.
+> `tools/USBVideo.c`, `usbvideo_gui.c`, `USBVideoTest.c`, `uvc_client.c`, `uvc_record.c`, `uvc_preview.c`.
 >
 > This document describes structure, behaviour and the rules that keep it correct. It names
 > functions as anchors; the code is the reference for wire and field layouts, timings and retry
@@ -102,7 +102,7 @@ flowchart TB
 | **Transports** | Isochronous: RT-ISO hooks. Bulk: one pipe, one transfer in flight, payloads cut out of transfers | `uvc_iso.c`: `uvcInDoneHook`, `uvcIsoStart`; `uvc_bulk.c`: `uvcBulkTransfer`, `uvcBulkAsk`, `uvcBulkDone` |
 | **Device layer** | Open/close/`BeginIO`/`AbortIO`; read-only commands in the caller's context; forwarding | `dev.c`: `devOpen`, `devClose`, `devBeginIO`, `devAbortIO`, `nModeTable`, `nTopology` |
 | **Settings and persistence** | MUI window task (Picture, Camera, Mode pages); the two stored chunks and putting them in force | `usbvideo.gui.c`: `nGUITask`, `nGuiRequest`, `nGuiStore`; `UvcCfgChunk`, `nApplyConfig`, `nApplyStoredControls` |
-| **Clients** | VHI driver; the tools and what they share | `vhi/neptune.vhi.c`, `vhi/mjpegdht.h`, `tools/uvc_client.c`, `tools/uvc_preview.c` |
+| **Clients** | VHI driver; the tools and what they share | `vhi/neptune.vhi.c`, `vhi/mjpegdht.h`, `tools/uvc_client.c`, `tools/uvc_record.c`, `tools/uvc_preview.c` |
 
 A unit (`NepVideoStream`) groups its changing state into sub-structures whose names say who may
 touch them: mode in force with the negotiated block (`ns_Mode`), the user's default mode
@@ -448,25 +448,51 @@ Details: [uvc/notes/vhi-notes.md](uvc/notes/vhi-notes.md).
 - **No decoder**: cAMIra takes `VHI_JPEG`. A camera without MJPEG gets YUY2 sorted into the planes
   of `VHI_YUV_422` without arithmetic (never run).
 
-**Tools**: `USBVideo` is the user tool: in the Shell it gives info and modes, and records H.264 or
-MJPEG into one Matroska file; from its icon or with `GUI` it is a MUI window (`tools/usbvideo_gui.c`, MUI opened at run time); with `PREVIEW` it shows the stream without
+**Tools**: `USBVideo` is the user tool: in the Shell it gives info and modes, and records H.264,
+MJPEG, YUY2 or NV12 into Matroska files; from its icon or with `GUI` it is a MUI window (`tools/usbvideo_gui.c`, MUI opened at run time); with `PREVIEW` it shows the stream without
 MUI. `USBVideoTest` is the test bench, built but not shipped (each test ends in PASS or FAIL). Both
-use `tools/uvc_client.c` (camera, capture loop, reads, files), `tools/uvc_preview.c` (the stream
-process), `vhi/mjpegdht.h` (standard Huffman tables, frame checks) and `tools/mkv` (the Matroska
-muxer, the mkv-writer submodule).
+use three modules, each above the ones before it:
 
-**The stream process** (`tools/uvc_preview.c`) runs a camera for the tools: reads, decoder, preview
-window, files. Pixels stay out of the class; this is where they are. The reasons, because each
-guards a failure:
+- `tools/uvc_client.c`: the camera and its reads. Commands (`uvcSetMode`, `uvcReopenCamera`, the
+  key frame request), both loops over the reads (the synchronous `uvcNextFrame`, and the reads a
+  loop of its own drives), what a frame's bytes hold.
+- `tools/uvc_record.c`: the recording into Matroska files through `tools/mkv` (the mkv-writer
+  submodule), including the H.264 key-frame wait. Its owner gives it the frames: the Shell tool's
+  loop, or the stream process.
+- `tools/uvc_preview.c`: the stream process, with the videocodec session and the window.
+
+Each structure belongs to its module. Others read the fields its header marks and write none, a
+read's `rd_UserData` aside. Reads are reached through `UVC_EACH_READ()`, and `uvcReadsAtDevice()`
+tells how many the camera has. `vhi/mjpegdht.h` (the standard Huffman tables, frame checks) is
+shared with the VHI driver.
+
+**The stream process** (`tools/uvc_preview.c`) runs a camera for the tools: reads, a videocodec
+session, preview window, a recording. Pixels stay out of the class; this is where they are. MJPEG and
+H.264 go to a decoder session, YUY2 and NV12 to a converter session (`VCK_Converter`: pictures in,
+pictures out), one table (`PreviewPaths`) saying which; the GUI asks it (`uvpCanPreview`) to mark
+the formats with no picture. The reasons, because each guards a failure:
 
 - **A process of its own.** MUI blocks in the layer lock while a menu is held or a window dragged.
   In the same task that would stop reads coming back, and each menu would be a hole in an H.264
   stream and in a recording. Everything of the camera is made in that process, ports included, so
   its signals are its own; the caller sends commands and reads counts.
-- **The buffers are the tool's, lent to the decoder** with `VC_ImportPacket()`. A read writes the
-  frame straight into one and the VPU reads it there (by SMEM when it is 512 KiB or more and in the
-  VPU's reach, else by bulk), with no copy on the 68k. So no read ever points into memory a session
-  frees, a failed session leaves the stream saving, and a stream without a decoder is the same stream.
+- **The buffers are the tool's, lent to the session** with `VC_ImportPacket()` (a decoder's) or
+  `VC_ImportFrame()` (a converter's). A read writes the frame straight into one and the VPU reads it
+  there (by SMEM when it is 512 KiB or more and in the VPU's reach, else by bulk; a converter's
+  pictures always when in reach), with no copy on the 68k. So no read ever points into memory a
+  session frees, a failed session leaves the stream saving, and a stream without a session is the
+  same stream.
+- **An uncompressed frame is converted as it came.** A converter takes the camera's own layout: YUY2
+  at two bytes a pixel, NV12 with its UV rows right after the picture's (the converter's
+  `VCCodecInfo.InputFormats` names the formats it reads). Only whole
+  frames go, which the class guarantees. A converter gives a frame back only once its picture is
+  out, and a window changing size stops that for a while: it gets two of the four reads at most, so
+  the camera always has two and a resize costs pictures, never frames (it cost 13 frames in 300
+  before). YUY2 at 640x480 and 30 fps keeps the 68k 22 % busy (idle 6 %), MJPEG at that size 18 %:
+  the class copies twelve times the bytes. The VPU reads YUV as full-range BT.601 whatever it is
+  told, so a camera's video-range picture (16 to 235) shows a little flat; nothing on the VPU can
+  stretch it (vchiq's `docs/firmware-facts.md`). The C930e's YUY2 runs at 30 fps only up to
+  848x480, so this is a picture to aim the camera by, while recording uncompressed.
 - **Stopping has one order:** `CMD_STOP`, reads taken back, session closed, buffers freed. The stop
   comes first because an abort alone leaves the read being filled with a silent camera (rule 7).
 - **A flag per read says it is at the device** (`rd_AtDevice`); only then may it get `WaitIO()`
@@ -475,21 +501,21 @@ guards a failure:
   same port and can eat the signal of a read that came meanwhile.
 - **MJPEG is not moved.** A frame is read 420 bytes into its buffer; a new SOI and either the
   standard tables or a comment of that length overwrite the room and the frame's own SOI
-  (`uvcJpegFill`). Files are written before that, from the frame as it came. A frame with no
+  (`jpegFill`). Files are written before that, from the frame as it came. A frame with no
   picture or no EOI does not reach the decoder.
 - **H.264 goes straight to the decoder.** It gives nothing until its first key frame, by itself.
   After a hole its pictures are rubbish until the next one, so the first frame after a hole asks the
   camera for a key frame (`UVCX_PICTURE_TYPE_CONTROL`), if it has the H.264 unit; the C930e sends it
   two frames later, whatever its key interval.
 - **A recording is Matroska**, of H.264, MJPEG, YUY2 or NV12, and nothing else is saved: no single
-  frames (`uvcStartRecording`, `uvcRecordFrame`; the capture holds it). Raw frames go in as they
+  frames (`uvcStartRecording`, `uvcRecordFrame`; its owner holds it). Raw frames go in as they
   come, `V_UNCOMPRESSED` with the FourCC, and only whole ones. Each recording makes a new file at
   the first free number, so none is written over, and stopping finishes it; a file cut short still
   plays. The muxer counts to 4 GiB, so 64 MiB short of that the recording goes on in the next file:
-  YUY2 at 640x480 fills one in under 4 minutes. H.264 waits there for a key frame, asked for. H.264 begins at a key frame, which the camera is asked
-  for. A frame's time comes from `ivr_PTS`, with the clock the mode states, not from the sequence
-  number: in poor light the C930e falls to 24 fps, and counting frames would make the file play fast. What waits
-  goes to the disk after each frame, so a slow disk costs frames.
+  YUY2 at 640x480 fills one in under 4 minutes. Every H.264 file begins at a key frame, which the
+  recording asks the camera for, once a second of frames while it waits. A frame's time comes from `ivr_PTS`, with the clock the mode states, not
+  from the sequence number: in poor light the C930e falls to 24 fps, and counting frames would make
+  the file play fast. What waits goes to the disk after each frame, so a slow disk costs frames.
 - **Only the newest picture is drawn,** and only if `AttemptLockLayerRom()` gets the layer: a slow or
   locked window costs pictures, never delay and never a read. A held menu does lock it on 3.2: over
   3.4 s of one, 102 pictures went undrawn during an H.264 stream and no frame was lost. The session's
@@ -497,9 +523,8 @@ guards a failure:
   nothing and the frames held would be lost.
 - **Priority 0 holds,** with Executive running: 1920x1080 H.264 lost no frame in a minute. A preview
   at that size takes about 15 % of the 68k, in either format.
-- **The library must match.** The interface of `videocodec.library` is still moving under one version
-  number: the stream process reports a library of 26 Oct as having no decoder, and the stream runs
-  on without a picture.
+- **The library must match.** The stream process takes `videocodec.library` 0.4, the first public
+  one; with an older one it says the library is too old, and the stream runs on without a picture.
 
 ---
 

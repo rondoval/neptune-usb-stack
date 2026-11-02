@@ -27,6 +27,7 @@
 
 #include "uvc_client.h"
 #include "uvc_preview.h"
+#include "uvc_record.h"
 #include "usbvideo_gui.h"
 
 #define MAX_UNITS    8  /* units looked at for a camera */
@@ -263,8 +264,7 @@ static void fillFormats(struct Gui *gui)
 
             if(!known)
             {
-                choiceAdd(ch, fourcc, ((fourcc == UVFCC_MJPG) || (fourcc == UVFCC_H264)) ? "%s" : "%s (no picture)",
-                          uvcFourCCText(fourcc, name));
+                choiceAdd(ch, fourcc, uvpCanPreview(fourcc) ? "%s" : "%s (no picture)", uvcFourCCText(fourcc, name));
             }
         }
     }

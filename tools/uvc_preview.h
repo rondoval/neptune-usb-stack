@@ -4,8 +4,9 @@
  *----------------------------------------------------------------------------
  *              UVC tools: the stream process
  *----------------------------------------------------------------------------
- * A camera run by a process of its own: its reads, the decoder, the preview
- * window, the files. The caller may block on anything (a held menu, a
+ * A camera run by a process of its own: its reads (uvc_client.h), the
+ * videocodec session, the preview window, the recording (uvc_record.h). The
+ * caller may block on anything (a held menu, a
  * requester, its own window's layers) and no read comes back late, which
  * would leave a hole in an H.264 stream and in a recording.
  *
@@ -14,10 +15,10 @@
  * uvpOpen(). What the camera is and what the stream did can be read at any
  * time, through the const pointers.
  *
- * MJPEG and H.264 get a preview window where the machine can decode them,
- * through videocodec.library. Without one (no library, not a Picasso96
- * screen, another format) the stream runs all the same, for saving, and
- * uvpWhy() says what is missing.
+ * MJPEG and H.264 (decoded) and YUY2 and NV12 (converted) get a preview
+ * window where the machine can show them, through videocodec.library.
+ * Without one (no library, not a Picasso96 screen, another format) the
+ * stream runs all the same, for saving, and uvpWhy() says what is missing.
  */
 
 #include <exec/types.h>
@@ -35,7 +36,7 @@ struct UvpCounts
     ULONG uc_Frames;   /* came from the camera */
     ULONG uc_Bytes;    /* their bytes */
     ULONG uc_Lost;     /* the camera started them and none came: no read was waiting, or too long */
-    ULONG uc_Held;     /* came, and were kept from the decoder: nothing in them */
+    ULONG uc_Held;     /* came, and were kept from the session: nothing in them, or the converter was full */
     ULONG uc_Sent;     /* to the decoder */
     ULONG uc_Pictures; /* from the decoder */
     ULONG uc_Shown;    /* into the window; of many that came at once only the newest is */
@@ -45,6 +46,9 @@ struct UvpCounts
 };
 
 struct UvcPreview;
+
+/* Whether a camera format can have a preview window, given the library */
+BOOL uvpCanPreview(ULONG fourcc);
 
 /* Start the process and open the unit. stopmask: the signals of the calling
    task to set when the stream ends by itself or loses its preview. tickmask:
@@ -71,7 +75,8 @@ void uvpKeepClear(struct UvcPreview *up, const struct IBox *box);
 BOOL uvpStart(struct UvcPreview *up, const struct UsbVideoModeReq *uvq, STRPTR stem);
 void uvpStop(struct UvcPreview *up);
 /* Record every frame from here on into a new Matroska file, or no more:
-   H.264 or MJPEG, H.264 from a key frame, which the camera is asked for */
+   H.264, MJPEG, YUY2 or NV12, H.264 from a key frame, which the camera is
+   asked for */
 BOOL uvpRecord(struct UvcPreview *up, BOOL on);
 /* Open the camera's settings window */
 BOOL uvpSettings(struct UvcPreview *up);

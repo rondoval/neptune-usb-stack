@@ -17,12 +17,13 @@ foreach(t ${SHELLAPPS})
     nep_debug_finalize(${t})   # links -ldebug only for the serial backend (tools have no log sites)
 endforeach()
 
-# uvc_client.c: what a client of usbvideo.device does (commands, mode list, reads, files).
-# uvc_preview.c: a camera run by a process of its own, with a preview window.
-# mjpegdht.h is the VHI driver's; the JPEG files saved are completed with it.
+# uvc_client.c: what a client of usbvideo.device does (commands, mode list, reads, frames).
+# uvc_record.c: the recording into Matroska files, above the client.
+# uvc_preview.c: a camera run by a process of its own, with a preview window, above both.
+# mjpegdht.h is the VHI driver's; recorded and previewed MJPEG frames are completed with it.
 # mkv/ is the mkv-writer submodule, the Matroska muxer.
 foreach(t USBVideo USBVideoTest)
-    target_sources(${t} PRIVATE uvc_client.c uvc_preview.c mkv/mkv.c)
+    target_sources(${t} PRIVATE uvc_client.c uvc_record.c uvc_preview.c mkv/mkv.c)
     target_include_directories(${t} PRIVATE ${CMAKE_SOURCE_DIR}/vhi ${CMAKE_CURRENT_SOURCE_DIR}/mkv)
 endforeach()
 

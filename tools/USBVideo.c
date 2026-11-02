@@ -18,8 +18,8 @@
  *                                  and KEYFRAME (key frame interval, ms)
  *                                  override the encoder's defaults
  *   USBVideo PREVIEW FORMAT=H264 WIDTH=1280 HEIGHT=720
- *                                  a window that shows the stream, decoded
- *                                  by videocodec.library, until Ctrl-C or the
+ *                                  a window that shows the stream, through
+ *                                  videocodec.library, until Ctrl-C or the
  *                                  window closes; with TO it records too
  *   USBVideo GUI                   the window (needs MUI); UNIT picks the camera
  *
@@ -37,6 +37,7 @@
 
 #include "uvc_client.h"
 #include "uvc_preview.h"
+#include "uvc_record.h"
 #include "usbvideo_gui.h"
 
 /* ReadArgs indices, in template order; those after ARGS_TO are capture
@@ -72,18 +73,17 @@ static ULONG numberArgument(ULONG arg, ULONG none)
     return ArgsArray[arg] ? *((ULONG *) ArgsArray[arg]) : none;
 }
 
-/* Set the requested mode (NSCMD_UV_SETMODE) and print the negotiated one.
+/* Set the requested mode (uvcSetMode()) and print the negotiated one.
    Print the reason and return FALSE if it fails, or if BITRATE/KEYFRAME
    were given and the mode's encoder ignored them. */
 static BOOL setMode(struct UvcCamera *cm, struct UsbVideoModeReq *uvq)
 {
     ULONG bitrate = uvq->uvq_BitRate;
     ULONG keyinterval = uvq->uvq_KeyInterval;
-    LONG err = uvcCommand(cm->cm_Request, NSCMD_UV_SETMODE, uvq, sizeof(*uvq));
+    LONG err = uvcSetMode(cm, uvq);
 
     if(err)
     {
-        Printf("Could not set that mode: %s\n", uvcErrorText(err));
         if(err == UVERR_BADMODE)
         {
             PutStr("USBVideo without TO lists the modes it has.\n");
@@ -100,14 +100,15 @@ static BOOL setMode(struct UvcCamera *cm, struct UsbVideoModeReq *uvq)
     return TRUE;
 }
 
-/* Return why a capture ended early, as text; NULL if it completed */
-static STRPTR whyStopped(const struct UvcCapture *cp)
+/* Return why a capture ended early, as text; NULL if it completed.
+   notsaved: the recording failed. */
+static STRPTR whyStopped(const struct UvcCapture *cp, BOOL notsaved)
 {
     if(cp->cp_Interrupted)
     {
         return "Ctrl-C";
     }
-    if(cp->cp_NotSaved)
+    if(notsaved)
     {
         return "could not record";
     }
@@ -120,15 +121,15 @@ static STRPTR whyStopped(const struct UvcCapture *cp)
 
 /* Print the capture summary (saved, lost, early stop); return the DOS
    return code. Without a number of frames, Ctrl-C is how it ends. */
-static LONG reportCapture(const struct UvcCapture *cp, ULONG frames)
+static LONG reportCapture(const struct UvcCapture *cp, const struct UvcRecording *rc, BOOL notsaved, ULONG frames)
 {
-    ULONG saved = cp->cp_Recording.rc_Saved;
-    ULONG lost = cp->cp_Missed + cp->cp_TooLong;
-    STRPTR stopped = (frames || !cp->cp_Interrupted) ? whyStopped(cp) : NULL;
+    ULONG saved = rc->rc_Saved;
+    ULONG lost = uvcLost(cp);
+    STRPTR stopped = (frames || !cp->cp_Interrupted) ? whyStopped(cp, notsaved) : NULL;
 
     if(saved)
     {
-        uvcPrintSaved(&cp->cp_Recording);
+        uvcPrintSaved(rc);
     } else {
         PutStr("Nothing was recorded.\n");
     }
@@ -151,30 +152,44 @@ static LONG reportCapture(const struct UvcCapture *cp, ULONG frames)
    named from stem; return the DOS return code */
 static LONG record(struct UvcCamera *cm, struct UsbVideoModeReq *uvq, ULONG frames, STRPTR stem)
 {
+    struct UvcRecording rc;
     struct UvcCapture cp;
+    BOOL notsaved = FALSE;
 
     if(!setMode(cm, uvq))
     {
         return RETURN_FAIL;
     }
-    if(uvcStartCapture(&cp, cm, uvq, stem))
+    if(!uvcStartRecording(&rc, cm, stem, uvq))
     {
-        while((!frames || (cp.cp_Recording.rc_Saved < frames)) && uvcNextFrame(&cp))
+        PutStr("Nothing was recorded.\n");
+        return RETURN_FAIL;
+    }
+    if(uvcStartCapture(&cp, cm, uvq))
+    {
+        struct IOVideoReq *ivr;
+
+        while((!frames || (rc.rc_Saved < frames)) && (ivr = uvcNextFrame(&cp)))
         {
-            /* uvcNextFrame() records each frame */
+            if(!uvcRecordFrame(&rc, ivr))
+            {
+                notsaved = TRUE;
+                break;
+            }
         }
     }
     uvcStopCapture(&cp);
-    return reportCapture(&cp, frames);
+    uvcStopRecording(&rc);
+    return reportCapture(&cp, &rc, notsaved, frames);
 }
 
 /* Print what a preview's stream did */
 static void printCounts(const struct UvpCounts *uc)
 {
-    Printf("%ld frames came, %ld were lost, %ld kept from the decoder\n", uc->uc_Frames, uc->uc_Lost, uc->uc_Held);
-    Printf("%ld sent to the decoder, %ld pictures back, %ld shown, %ld saved\n", uc->uc_Sent, uc->uc_Pictures,
+    Printf("%ld frames came, %ld were lost, %ld kept from the VideoCore\n", uc->uc_Frames, uc->uc_Lost, uc->uc_Held);
+    Printf("%ld sent to the VideoCore, %ld pictures back, %ld shown, %ld saved\n", uc->uc_Sent, uc->uc_Pictures,
            uc->uc_Shown, uc->uc_Saved);
-    Printf("The decoder held back %ld frames at the last picture, %ld at most\n", uc->uc_Lag, uc->uc_LagMost);
+    Printf("The VideoCore held back %ld frames at the last picture, %ld at most\n", uc->uc_Lag, uc->uc_LagMost);
 }
 
 /* Run the stream in a process of its own until Ctrl-C, or until it ends by
