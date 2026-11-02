@@ -2,3 +2,6 @@
 	path = classes/massstorage/mounter
 	url = https://github.com/rondoval/mounter.git
 	branch = neptune-fixes
+[submodule "tools/mkv"]
+	path = tools/mkv
+	url = https://github.com/rondoval/mkv-writer

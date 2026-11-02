@@ -47,7 +47,7 @@ add_executable(NeptuneUSB
     locale.c
     ${MASON_ICONS})
 
-add_dependencies(NeptuneUSB neptune_sfd_headers usbclass_sfd_headers neptuneusb_strings)
+add_dependencies(NeptuneUSB neptune_sfd_headers neptune_class_sfd_headers neptuneusb_strings)
 
 target_compile_options(NeptuneUSB PRIVATE
     -O2 -DNEPTUNE_BASE_NAME=ps
@@ -60,7 +60,7 @@ target_include_directories(NeptuneUSB PRIVATE
 
 target_link_libraries(NeptuneUSB PRIVATE
     neptune_headers
-    usbclass_headers
+    neptune_class_headers
     mui_headers
     -lamiga)        # DoMethod / DoSuperMethodA / MUI vararg macros
 

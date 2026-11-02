@@ -323,14 +323,14 @@ def neptune_modules(build_dir):
     if (here / "usbromstart").is_file():
         kit = here.parent
         library = kit / "LIBS" / "neptune.library"
-        classes = [kit / "DEVS" / "USBClasses" / f"{c}.class" for c in ROM_CLASSES]
+        classes = [kit / "DEVS" / "USBClasses" / f"{c}.usbclass" for c in ROM_CLASSES]
         romstart = here / "usbromstart"
         out_dir = Path.cwd()
         hint = "the archive is incomplete; unpack Neptune-<ver>-<cpu>.lha again"
     else:
         build = Path(build_dir) if build_dir else here.parent / "build"
         library = build / "neptune.library" / "neptune.library"
-        classes = [build / "classes" / c / f"{c}.class" for c in ROM_CLASSES]
+        classes = [build / "classes" / c / f"{c}.usbclass" for c in ROM_CLASSES]
         romstart = build / "romstartup" / "usbromstart"
         out_dir = build
         hint = f"Neptune modules come from {build} - run ./build.sh --build"

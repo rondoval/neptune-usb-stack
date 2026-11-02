@@ -327,13 +327,16 @@
 #define NTSCCF_SUBCLASS  (1<<25) /* Subclass field is valid */
 #define NTSCCF_PROTO     (1<<26) /* Protocol field is valid */
 
-/* Event Handler stuff */
+/* Event Handler stuff. Notes arrive asynchronously: for EHMB_REMHARDWARE,
+   EHMB_REMDEVICE and EHMB_REMCLASS the object is already freed when the note
+   is read, so Param1 is its former address, to compare against - never
+   dereference it. */
 #define EHMB_ADDHARDWARE  0x01 /* Param1 = phw */
-#define EHMB_REMHARDWARE  0x02 /* Param1 = phw */
+#define EHMB_REMHARDWARE  0x02 /* Param1 = former phw, identity only */
 #define EHMB_ADDDEVICE    0x03 /* Param1 = pd */
-#define EHMB_REMDEVICE    0x04 /* Param1 = pd */
+#define EHMB_REMDEVICE    0x04 /* Param1 = former pd, identity only */
 #define EHMB_ADDCLASS     0x05 /* Param1 = puc */
-#define EHMB_REMCLASS     0x06 /* Param1 = puc */
+#define EHMB_REMCLASS     0x06 /* Param1 = former puc, identity only */
 #define EHMB_ADDBINDING   0x07 /* Param1 = pd */
 #define EHMB_REMBINDING   0x08 /* Param1 = pd */
 #define EHMB_ADDERRORMSG  0x09 /* Param1 = pem */
@@ -343,6 +346,20 @@
 #define EHMB_DEVICELOWPW  0x0d /* Param1 = pd */
 #define EHMB_DEVSUSPENDED 0x0e /* Param1 = pd */
 #define EHMB_DEVRESUMED   0x0f /* Param1 = pd */
+#define EHMB_DEVRECOVERY  0x10 /* Param1 = pd, identity only; Param2 = struct PsdDevRecovery * */
+
+/* EHMB_DEVRECOVERY is sent once for every dead or overdrawn device the stack
+   handles (after EHMB_DEVICEDEAD / EHMB_DEVICELOWPW): what it did about it,
+   as the hub is told - so the device may be gone when the note is read.
+   pdr_Action follows GCA_AutoRestartDead, GCA_AutoDisableDead and
+   GCA_AutoDisableLP; EHRA_NONE when they ask for nothing or the device has no
+   parent hub (a root hub). */
+#define EHRA_NONE         0 /* nothing done: the device needs attention */
+#define EHRA_POWERCYCLE   1 /* port power-cycled */
+#define EHRA_DISABLE      2 /* port disabled */
+
+#define PDRF_DEAD         0x0001 /* the device stopped responding */
+#define PDRF_LOWPOWER     0x0002 /* the device draws more than its port supplies */
 
 #define EHMF_ADDHARDWARE  (1L<<EHMB_ADDHARDWARE)
 #define EHMF_REMHARDWARE  (1L<<EHMB_REMHARDWARE)
@@ -359,18 +376,13 @@
 #define EHMF_DEVICELOWPW  (1L<<EHMB_DEVICELOWPW)
 #define EHMF_DEVSUSPENDED (1L<<EHMB_DEVSUSPENDED)
 #define EHMF_DEVRESUMED   (1L<<EHMB_DEVRESUMED)
+#define EHMF_DEVRECOVERY  (1L<<EHMB_DEVRECOVERY)
 
 /* Configuration stuff */
 
-/* Outermost prefs FORM ID. The IFF *contents* are not endian-agnostic, so AROS made this ID
- * endian-specific ('PSBC' big / 'PSLC' little), distinct from Chris Hodges' classic AmigaOS
- * Poseidon (v4.5) 'PSDC'.
- * I didn't see any significant changes in the source code, so I'm assuming it is compatible
- * with the 4.x line prefs format. 
- * We therefore use the original 'PSDC' to keep existing classic-Poseidon prefs loading.
- * NOTE: if on-hardware testing shows the prefs are NOT compatible with classic 4.5, switch this to
- * the AROS big-endian ID MAKE_ID('P','S','B','C'). */
-#define IFFFORM_PSDCFG     MAKE_ID('P','S','D','C')
+/* Outermost prefs FORM ID: Neptune's own, so its files are told from Poseidon's 'PSDC'
+ * (written by 6.0-6.2 and by the classic 4.x line, whose settings don't fit Neptune). */
+#define IFFFORM_NEPCFG     MAKE_ID('N','E','P','C')
 #define IFFFORM_STACKCFG   MAKE_ID('S','T','K','C')
 #define IFFFORM_DEVICECFG  MAKE_ID('D','E','V','C')
 #define IFFFORM_CLASSCFG   MAKE_ID('C','L','S','C')
@@ -545,6 +557,15 @@ struct PsdNotifyCfg
     /* APPEND ONLY - same min(saved, current) merge rule as PsdGlobalCfg above.
        Both new fields are deliberately zero-valued by default, so an existing
        per-device chunk needs no migration. */
+};
+
+/* Param2 of EHMB_DEVRECOVERY. It is part of the note: valid until the note
+   is replied, and copied by whoever needs it longer. */
+struct PsdDevRecovery
+{
+    ULONG pdr_Action;                     /* EHRA_* */
+    UWORD pdr_Flags;                      /* PDRF_*: what was wrong with the device */
+    UBYTE pdr_ProductName[2];             /* its product name, NUL-terminated, as long as it needs */
 };
 
 #if defined(__GNUC__)

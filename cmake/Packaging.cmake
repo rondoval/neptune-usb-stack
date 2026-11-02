@@ -7,9 +7,9 @@
 #       Neptune-<ver>-<cpu>[-<backend>]/
 #         Install  Install.info            the Installer script (dist/)
 #         LIBS/neptune.library
-#         LIBS/VHI/usbvideo.vhi            VHI driver for USB cameras -> LIBS:VHI/ (opt-in)
-#         DEVS/USBClasses/*.class
-#         C/USBStart AddUSBHardware AddUSBClasses USBList USBErrorlog
+#         LIBS/VHI/neptune.vhi            VHI driver for USB cameras -> LIBS:VHI/ (opt-in)
+#         DEVS/USBClasses/*.usbclass
+#         C/USBStart USBAddHardware USBAddClasses USBList USBErrorlog
 #         Prefs/NeptuneUSB  Prefs/NeptuneUSB.info
 #         WBStartup/USBEject  WBStartup/USBEject.info  (safe-eject Workbench menu, opt-in)
 #         Tools/<shellapps>                (optional group, opt-in at install)
@@ -35,7 +35,7 @@ install(TARGETS neptune_library RUNTIME DESTINATION LIBS)
 get_property(_neptune_classes GLOBAL PROPERTY NEPTUNE_CLASS_TARGETS)
 install(TARGETS ${_neptune_classes} RUNTIME DESTINATION DEVS/USBClasses)
 
-install(TARGETS USBStart AddUSBHardware AddUSBClasses USBList USBErrorlog
+install(TARGETS USBStart USBAddHardware USBAddClasses USBList USBErrorlog
         RUNTIME DESTINATION C)
 
 # --- ROM/ : the Kickstart-image kit ---------------------------------------------------
@@ -57,7 +57,7 @@ install(TARGETS NeptuneUSB RUNTIME DESTINATION Prefs)
 install(FILES ${CMAKE_SOURCE_DIR}/dist/NeptuneUSB.info DESTINATION Prefs)
 
 # Settings-file datatype + default icon. DefIcons (a standard 3.2 WBStartup component)
-# identifies FORM..PSDC settings files via the Neptune datatype and paints def_Neptune.info on
+# identifies FORM..NEPC settings files via the Neptune datatype and paints def_Neptune.info on
 # the ones that lack their own icon. Descriptor -> DEVS:DataTypes/Neptune ;
 # def_Neptune.info -> ENV(ARC):SYS/.
 install(FILES ${CMAKE_SOURCE_DIR}/dist/datatypes/Neptune DESTINATION DEVS/DataTypes)
@@ -98,13 +98,14 @@ foreach(i RANGE ${_n})
 endforeach()
 
 # Niche per-gadget tools - opt-in at install time (the Installer asks); shipped under Tools/.
-# UVCTest, the test bench of usbvideo.class, is built but not shipped.
-install(TARGETS DRadioTool PencamTool PowManTool RocketTool SonixcamTool UPSTool UVCTool
+# USBVideoTest, the test bench of usbvideo.class, is built but not shipped.
+install(TARGETS USBRadio USBPencam USBPowMan USBRocket USBSonixcam USBUPS USBVideo
         RUNTIME DESTINATION Tools)
+install(FILES ${CMAKE_SOURCE_DIR}/dist/USBVideo.info DESTINATION Tools)  # it has a window
 
 # The VHI driver for USB video cameras - opt-in at install time; VHI applications look for
 # drivers in LIBS:VHI/, and the drawer mirrors that.
-install(TARGETS usbvideo_vhi RUNTIME DESTINATION LIBS/VHI)
+install(TARGETS neptune_vhi RUNTIME DESTINATION LIBS/VHI)
 
 # USBEject safe-eject daemon -> SYS:WBStartup (the Installer asks; icon carries DONOTWAIT).
 install(TARGETS USBEject RUNTIME DESTINATION WBStartup)
@@ -126,7 +127,7 @@ install(FILES ${CMAKE_SOURCE_DIR}/dist/Install
 # emu68-driver-stack's @DEBUG_BACKEND@ ReadMe.
 #
 # No variant needs an FPU: the stack itself has no floating point at all, and the only
-# code that does - the gamma table in the optional PencamTool/SonixcamTool - is soft-float
+# code that does - the gamma table in the optional USBPencam/USBSonixcam - is soft-float
 # in the 68020 build and emulated by 68040.library/68060.library on an LC part.
 if(M68K_CPU STREQUAL "68020")
     set(CPU_DESCRIPTION

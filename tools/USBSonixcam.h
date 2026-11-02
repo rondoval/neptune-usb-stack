@@ -1,5 +1,5 @@
-#ifndef SONIXCAMTOOL_H
-#define SONIXCAMTOOL_H
+#ifndef USBSONIXCAM_H
+#define USBSONIXCAM_H
 
 /* sonixcam vendor specific requests */
 
@@ -85,4 +85,4 @@ struct NepClassSonixcam
     ULONG               nch_FrameCnt;
 };
 
-#endif /* SONIXCAMTOOL_H */
+#endif /* USBSONIXCAM_H */

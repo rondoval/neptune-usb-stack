@@ -39,7 +39,7 @@
    copied in each case (the length is given in the form).
 
    The configuration normally looks like this:
-   FORM PSDC (Poseidon Config file)
+   FORM NEPC (Neptune config file)
 
 [1*] FORM STKC (Stack config)
 [n*]   FORM UDEV (USB hardware device)
@@ -474,6 +474,8 @@ struct PsdDevice
     UWORD               pd_CloneCount;    /* Running Number to distinguish same devices */
     UWORD               pd_DeadCount;     /* Number of timeouts on the device */
     UWORD               pd_IOBusyCount;   /* Busy IO: transfers in flight on pipes with pp_BusyWeight 1 (not interrupt listeners) + running RT-ISO streams */
+    UBYTE               pd_Suspending;    /* psdSuspendDevice() is past its bindings' consent and not yet done (pTransferBegin) */
+    UBYTE               pd_WakeWanted;    /* a transfer started while pd_Suspending: wake the device once it is parked */
     ULONG               pd_EpHaltMask;    /* Endpoints owed a CLEAR_FEATURE(ENDPOINT_HALT): bit 1-15 =
                                              OUT EPn, bit 17-31 = IN EPn (PDEPHALT_* above).  Set at completion delivery
                                              (pCompletePipe), consumed by the event task's stall
@@ -658,6 +660,7 @@ struct PsdRTIsoHandler
     struct IOUsbHWRTIso prt_RTIso;        /* RT Iso structure (the classic class-facing block) */
     struct USBIsoHooks  prt_IsoHooks;     /* Context backend: the wire hook block (filled from prt_RTIso at marshal; uih_Object = &prt_RTIso keeps class hooks unchanged) */
     UWORD               prt_HookFlags;    /* UHCD_IHF_* for that block (RTA_ReportInErrors) */
+    BOOL                prt_Running;      /* Started: holds one pd_IOBusyCount until stopped or freed */
 };
 
 /* Summary of BOS capabilities for one device */

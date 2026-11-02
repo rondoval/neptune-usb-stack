@@ -1139,6 +1139,6 @@ No se puede expulsar '%s':\n%s todavía está en uso.\nCierre todos los archivos y
 ; Cannot eject '%s':\n%s is still in use.\nClose all files on it and try again.
 ;
 MSG_ACTION_DEV_EJECT_FAILED_TXT
-La expulsión de '%s' ha fallado.\nConsulte el registro de errores; puede ser necesario\nactualizar massstorage.class.
-; Ejecting '%s' failed.\nSee the error log; an updated\nmassstorage.class may be required.
+La expulsión de '%s' ha fallado.\nConsulte el registro de errores; puede ser necesario\nactualizar massstorage.usbclass.
+; Ejecting '%s' failed.\nSee the error log; an updated\nmassstorage.usbclass may be required.
 ;

@@ -60,7 +60,7 @@ body:
     id: host-controller
     attributes:
       label: USB host-controller device + driver version
-      description: The device attached with AddUSBHardware.
+      description: The device attached with USBAddHardware.
       placeholder: "xhci.device 0.x"
     validations:
       required: true
@@ -70,7 +70,7 @@ body:
     attributes:
       label: USB device and class involved
       description: The peripheral that triggers the problem, and which class driver handles it.
-      placeholder: "SanDisk Ultra flash drive - massstorage.class"
+      placeholder: "SanDisk Ultra flash drive - massstorage.usbclass"
     validations:
       required: false
 

@@ -20,7 +20,7 @@ MSG_REQ_BUSY (//)
 Cannot eject '%s':\n%s is still in use.\nClose all files on it and try again.
 ;
 MSG_REQ_TOOOLD (//)
-Cannot eject '%s':\nthe installed massstorage.class is too old\nfor safe eject - please update it.
+Cannot eject '%s':\nthe installed massstorage.usbclass is too old\nfor safe eject - please update it.
 ;
 MSG_REQ_FAILED (//)
 Ejecting '%s' failed.\nSee the Neptune error log (Neptune USB).

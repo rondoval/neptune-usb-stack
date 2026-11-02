@@ -291,7 +291,7 @@ void nGUITask()
         MUIA_Application_Version    , (IPTR)VERSION_STRING,
         MUIA_Application_Copyright  , (IPTR)"(C) 2002-2009 Chris Hodges",
         MUIA_Application_Author     , (IPTR)"Chris Hodges <chrisly@platon42.de>",
-        MUIA_Application_Description, (IPTR)"Settings for the hid.class",
+        MUIA_Application_Description, (IPTR)"Settings for the " CLASS_NAME,
         MUIA_Application_Base       , (IPTR)"HID",
         MUIA_Application_HelpFile   , (IPTR)"HELP:Neptune.guide",
         MUIA_Application_Menustrip  , (IPTR)MenustripObject,

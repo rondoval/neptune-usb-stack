@@ -12,6 +12,7 @@ icontool - the files here only matter when *regenerating* them.
 | `dist/Install.info` | `installer.png` + `installer.info.src` | project, DefaultTool=`SYS:System/Installer`, ToolTypes `APPNAME` / `MINUSER` / `DEFUSER`, ColorIcon |
 | `dist/NeptuneUSB.info` | `NeptuneUSB.png` + `NeptuneUSB.info.src` | tool (Stack 57344), ColorIcon |
 | `dist/USBEject.info` | `USBEject.png` + `USBEject.info.src` | tool (Stack 16384, ToolType `DONOTWAIT`), ColorIcon |
+| `dist/USBVideo.info` | `USBVideo.png` + `USBVideo.info.src` | tool (Stack 32768), ColorIcon |
 | `dist/def_Neptune.info` | `def_Neptune.png` + `def_Neptune.info.src` | project deficon, ColorIcon |
 | `dist/datatypes/Neptune` | `../datatypes/Neptune.dtd` | binary DataType descriptor |
 
@@ -41,7 +42,9 @@ Descriptor keys:
   art as Neptune USB for now; `DONOTWAIT` so WBStartup does not stall on it).
 - `def_Neptune.png` + `def_Neptune.info.src` - settings-file deficon art (the AROS Poseidon
   tree from the Poseidon sources).
-- `make_icons.py` - builds all four `.info` files from their PNG + `.info.src`.
+- `USBVideo.png` + `USBVideo.info.src` - USBVideo program icon (a webcam, drawn for this
+  project).
+- `make_icons.py` - builds all five `.info` files from their PNG + `.info.src`.
 
 The datatype source `../datatypes/Neptune.dtd` lives next to its generated binary.
 

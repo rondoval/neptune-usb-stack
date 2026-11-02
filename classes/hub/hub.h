@@ -13,13 +13,13 @@ struct NepHubBase
 
     struct Library     *nh_UtilityBase;   /* utility base */
     struct List         nh_Bindings;
-    struct SignalSemaphore nh_Adr0Sema;  /* Address 0 Semaphore - serializes hub.class default-address enumeration (class-wide). SuperSpeed hubs are context-only and don't serialize address 0. */
+    struct SignalSemaphore nh_Adr0Sema;  /* Address 0 Semaphore - serializes hub.usbclass default-address enumeration (class-wide). SuperSpeed hubs are context-only and don't serialize address 0. */
 };
 
 struct NepClassHub
 {
     struct Node         nch_Node;         /* Node linkage */
-    struct NepHubBase  *nch_HubBase;      /* hub.class base */
+    struct NepHubBase  *nch_HubBase;      /* hub.usbclass base */
     struct Library     *nch_Base;         /* neptune.library base */
     struct PsdHardware *nch_Hardware;     /* Up linkage */
     struct PsdDevice   *nch_Device;       /* Up linkage */
@@ -56,7 +56,7 @@ struct NepClassHub
 struct NepHubMsg
 {
     struct Message      nhm_Msg;          /* Message body */
-    ULONG               nhm_MethodID;     /* The method ID (see usbclass.h) */
+    ULONG               nhm_MethodID;     /* The method ID (see neptune_class.h) */
     IPTR               *nhm_Params;       /* Pointer to parameters of the method (all of them!) */
     IPTR                nhm_Result;       /* Result of call */
 };

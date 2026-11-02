@@ -66,7 +66,7 @@ BPTR (axLibExpunge)(struct AROSXBase * base asm("a6")) {
     BPTR ret;
 
     /*
-        CHECME: Our memory belongs to arosx.class, make sure we free only allocated memory
+        CHECME: Our memory belongs to arosx.usbclass, make sure we free only allocated memory
     */
 
     KPRINTF(10, ("[AROSXLib] axLibExpunge base: 0x%08lx\n", base));

@@ -249,11 +249,6 @@ struct NepClassAudio
     struct Hook         nch_InReqHook;    /* Hook for input */
     struct Hook         nch_InDoneHook;   /* Hook for input */
 
-    UWORD               nch_UnitProdID;   /* ProductID of unit */
-    UWORD               nch_UnitVendorID; /* VendorID of unit */
-    UWORD               nch_UnitCfgNum;   /* Config of unit */
-    UWORD               nch_UnitIfNum;    /* Interface number */
-    UWORD               nch_UnitAltIfNum; /* Alternate interface number */
     BOOL                nch_DenyRequests; /* Do not accept further IO requests */
 
     struct MsgPort     *nch_AHIMsgPort;   /* AHI Device msg Port */

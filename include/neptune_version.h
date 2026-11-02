@@ -6,7 +6,7 @@
  * NEPTUNE_DIST_NAME / NEPTUNE_CPU / NEPTUNE_BUILD_TAIL globally. Nothing here
  * hardcodes a version.
  *
- * NEP_VER("hub.class")  ->  "$VER: hub.class <ver> (<date>) Neptune 68040"
+ * NEP_VER("hub.usbclass")  ->  "$VER: hub.usbclass <ver> (<date>) Neptune 68040"
  *
  * A local (build.sh) build appends its stamp, " dev-<YYYYMMDD>-<HHMMSS>-g<hash>[-dirty]",
  * so every binary on the Amiga says which build produced it; NEPTUNE_BUILD_TAIL is ""

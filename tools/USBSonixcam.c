@@ -1,6 +1,6 @@
 /*
  *----------------------------------------------------------------------------
- *                         Sonixcam Tool for Neptune
+ *                         USBSonixcam - Sonixcam tool for Neptune
  *----------------------------------------------------------------------------
  * Based on the Poseidon Sonixcam Tool by Chris Hodges <chrisly@platon42.de>.
  */
@@ -14,7 +14,7 @@
 #include <proto/graphics.h>
 #include <proto/diskfont.h>
 
-#include "SonixcamTool.h"
+#include "USBSonixcam.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,9 +31,9 @@
 #define ARGS_UNIT     8
 #define ARGS_SIZEOF   9
 
-const char SonixcamTool_prgname[] = "SonixcamTool";
+const char USBSonixcam_prgname[] = "USBSonixcam";
 static const char *template = "TO/A,INTERVAL/N,UPTO/N/K,GAMMA/K,SHARPEN/S,TEXT/K,FONT/K,FONTSIZE/N/K,UNIT/N/K";
-const char SonixcamTool_version[] = NEP_VER("SonixcamTool");
+const char USBSonixcam_version[] = NEP_VER("USBSonixcam");
 static IPTR ArgsArray[ARGS_SIZEOF];
 static struct RDArgs *ArgsHook = NULL;
 

@@ -272,10 +272,10 @@ psdClearEndpointHalt
         psdRemCfgForm -- remove a configuration form
 
    SYNOPSIS
-        psdRemCfgForm(pic);
-                      A0
+        result = psdRemCfgForm(pic);
+        D0                     A0
 
-        VOID psdRemCfgForm(APTR);
+        BOOL psdRemCfgForm(APTR);
 
    FUNCTION
         Removes the given Neptune IFF context, including all its chunks and
@@ -287,6 +287,9 @@ psdClearEndpointHalt
         pic - pointer to a Neptune IFF context structure, or NULL for the
               root context (for normal applications, DO NOT USE the NULL
               pointer).
+
+   RESULT
+        result - always TRUE.
 
    SEE ALSO
         psdFindCfgForm(), psdNextCfgForm(), psdRemCfgChunk()

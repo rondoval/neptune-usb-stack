@@ -1,12 +1,12 @@
 /*
  *----------------------------------------------------------------------------
- *               usbvideo.vhi - VHI driver for USB video cameras
+ *               neptune.vhi - VHI driver for USB video cameras
  *----------------------------------------------------------------------------
  * VHI is the video capture interface applications such as cAMIra and VHI
  * Studio speak: a library in LIBS:VHI/ with one function, vhi_api()
  * (<vhi/vhi.h>).
  * This one contains no USB code. It is a client of usbvideo.device, the
- * application interface of usbvideo.class, and maps VHI onto it:
+ * application interface of usbvideo.usbclass, and maps VHI onto it:
  *
  *   an input              a unit of usbvideo.device, that is a camera;
  *                         input n is unit n
@@ -59,7 +59,7 @@
 #include <vhi/vhi.h>
 #include "mjpegdht.h"
 
-#define VHI_NAME          "usbvideo.vhi"
+#define VHI_NAME          "neptune.vhi"
 #define VHI_MAX_UNITS     8           /* units looked at for cameras: inputs 0..7 */
 #define VHI_FRAME_TIMEOUT 5           /* seconds a picture may take before the stream counts as stuck */
 #define VHI_EMPTY_FRAMES  16          /* frames without a picture in a row before the stream counts as empty */

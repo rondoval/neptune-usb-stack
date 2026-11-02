@@ -40,6 +40,7 @@ ICONS = [
     ("dist/icons/NeptuneUSB.png", "dist/icons/NeptuneUSB.info.src", "dist/NeptuneUSB.info"),
     ("dist/icons/def_Neptune.png", "dist/icons/def_Neptune.info.src", "dist/def_Neptune.info"),
     ("dist/icons/USBEject.png", "dist/icons/USBEject.info.src", "dist/USBEject.info"),
+    ("dist/icons/USBVideo.png", "dist/icons/USBVideo.info.src", "dist/USBVideo.info"),
 ]
 
 

@@ -15,7 +15,7 @@ set(ROMSTART_HCD "xhci.device" CACHE STRING
 add_executable(usbromstart
     usbromstart.c
     )
-add_dependencies(usbromstart neptune_sfd_headers usbclass_sfd_headers)
+add_dependencies(usbromstart neptune_sfd_headers neptune_class_sfd_headers)
 
 target_compile_options(usbromstart PRIVATE -Os -ffreestanding)
 
@@ -28,9 +28,9 @@ target_include_directories(usbromstart PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR})
 
-# usbclass_headers: the resident asks massstorage.class directly whether a medium is
+# neptune_class_headers: the resident asks massstorage.class directly whether a medium is
 # still coming up (UCM_MediaPending, inline LVO macros).
-target_link_libraries(usbromstart PRIVATE neptune_headers usbclass_headers
+target_link_libraries(usbromstart PRIVATE neptune_headers neptune_class_headers
     -Wl,--start-group -lc -lgcc -Wl,--end-group)
 
 # Linker entry point: a resident module is data to the loader, never a program.

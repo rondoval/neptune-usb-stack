@@ -226,7 +226,7 @@ struct NepClassPTP * usbForceInterfaceBinding(struct NepPTPBase *nh, struct PsdI
 
                 nLoadBindingConfig(nch);
 
-                psdSafeRawDoFmt(buf, 64, "ptp.class<%08lx>", nch);
+                psdSafeRawDoFmt(buf, 64, CLASS_NAME "<%08lx>", nch);
                 nch->nch_ReadySignal = SIGB_SINGLE;
                 nch->nch_ReadySigTask = FindTask(NULL);
                 SetSignal(0, SIGF_SINGLE);
@@ -4361,7 +4361,7 @@ void nGUITask()
         MUIA_Application_Version    , (IPTR)VERSION_STRING,
         MUIA_Application_Copyright  , (IPTR)"(C) 2008-2009 Chris Hodges",
         MUIA_Application_Author     , (IPTR)"Chris Hodges <chrisly@platon42.de>",
-        MUIA_Application_Description, (IPTR)"Settings for the ptp.class",
+        MUIA_Application_Description, (IPTR)"Settings for the " CLASS_NAME,
         MUIA_Application_Base       , (IPTR)"PTP",
         MUIA_Application_HelpFile   , (IPTR)"HELP:Neptune.guide",
         MUIA_Application_Menustrip  , (IPTR)MenustripObject,

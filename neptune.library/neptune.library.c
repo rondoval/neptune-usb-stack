@@ -25,10 +25,12 @@
 #include <proto/exec.h>
 #include <proto/dos.h>
 #include <proto/utility.h>
-#include <proto/usbclass.h>
+#include <proto/neptune_class.h>
 #include <proto/timer.h>
 
 #include <string.h>
+
+#include <nep_otherstack.h>
 
 /* amiga.lib veneer (jumps to the device's BEGINIO vector); declared in
  * <clib/alib_protos.h>, which we don't pull in -- exec_protos.h has DoIO/SendIO
@@ -121,7 +123,7 @@ int libOpen(struct PsdBase * ps)
             ps->ps_ReleaseVersion = RELEASEVERSION;
             ps->ps_OSVersion = MAKE_ID('A','R','O','S');
 
-            pic = pAllocForm(ps, NULL, IFFFORM_PSDCFG);
+            pic = pAllocForm(ps, NULL, IFFFORM_NEPCFG);
             if((ps->ps_GlobalCfg = psdAllocVec(sizeof(struct PsdGlobalCfg)))) {
                 ps->ps_GlobalCfg->pgc_ChunkID = AROS_LONG2BE(IFFCHNK_GLOBALCFG);
                 ps->ps_GlobalCfg->pgc_Length = AROS_LONG2BE(sizeof(struct PsdGlobalCfg)-8);
@@ -190,6 +192,15 @@ int libExpunge(struct PsdBase * ps)
     struct PsdErrorMsg *pem = (struct PsdErrorMsg *) ps->ps_ErrorMsgs.lh_Head;
     struct PsdIFFContext *pic = (struct PsdIFFContext *) ps->ps_ConfigRoot.lh_Head;
     KPRINTF(10, ("libExpunge ps: 0x%08lx\n", ps));
+
+    /* The event task runs from the first libOpen() on and starts the notifier.
+       Stopping either takes a Wait(), and exec calls Expunge under Forbid(): that
+       hung or reset the machine on Avail FLUSH. So a library with its tasks up
+       stays until reset. */
+    if(ps->ps_EventHandler.ph_Task || ps->ps_Notify.nt_Task) {
+        return FALSE;
+    }
+
     while(phw->phw_Node.ln_Succ) {
         psdRemHardware(phw);
         phw = (struct PsdHardware *) ps->ps_Hardware.lh_Head;
@@ -208,26 +219,6 @@ int libExpunge(struct PsdBase * ps)
         pic = (struct PsdIFFContext *) ps->ps_ConfigRoot.lh_Head;
     }
 
-    if(ps->ps_Notify.nt_Task) {
-        ps->ps_Notify.nt_ReadySignal = SIGB_SINGLE;
-        ps->ps_Notify.nt_ReadySigTask = FindTask(NULL);
-        Signal(ps->ps_Notify.nt_Task, SIGBREAKF_CTRL_C);
-        while(ps->ps_Notify.nt_Task) {
-            Wait(1L<<ps->ps_Notify.nt_ReadySignal);
-        }
-        ps->ps_Notify.nt_ReadySigTask = NULL;
-        //FreeSignal(ps->ps_Notify.nt_ReadySignal);
-    }
-    if(ps->ps_EventHandler.ph_Task) {
-        ps->ps_EventHandler.ph_ReadySignal = SIGB_SINGLE;
-        ps->ps_EventHandler.ph_ReadySigTask = FindTask(NULL);
-        Signal(ps->ps_EventHandler.ph_Task, SIGBREAKF_CTRL_C);
-        while(ps->ps_EventHandler.ph_Task) {
-            Wait(1L<<ps->ps_EventHandler.ph_ReadySignal);
-        }
-        ps->ps_EventHandler.ph_ReadySigTask = NULL;
-        //FreeSignal(ps->ps_EventHandler.ph_ReadySignal);
-    }
     psdFreeVec(ps->ps_Notify.nt_InsertSndFile);
     psdFreeVec(ps->ps_Notify.nt_RemoveSndFile);
     pGarbageCollectEvents(ps);
@@ -2786,7 +2777,7 @@ static LONG pContextAddressDevice(struct PsdBase *ps, struct PsdPipe *pp, struct
     LONG ioerr;
 
     memset(&cdo, 0, sizeof(cdo));
-    /* hub.class sets DA_HubDevice/DA_AtHubPortNumber/speed attrs before
+    /* hub.usbclass sets DA_HubDevice/DA_AtHubPortNumber/speed attrs before
        enumeration, so parent and port are already on the device */
     if(pd->pd_Hub) {
         cdo.cdo_ParentHandle = pd->pd_Hub->pd_Handle;
@@ -2932,6 +2923,28 @@ static LONG pContextConfigureEndpoints(struct PsdBase *ps, struct PsdPipe *pp, U
         return(UHIOERR_BADPARAMS);
     }
 
+    /* psdHubClassScan moves on to the next configuration when one binds
+       nothing: the HCD drops the previous configuration's endpoints with
+       this configure, so their tokens and stream counts go too. Inactive
+       alternates were already cleared by pContextSetInterface's drop. */
+    for(struct PsdConfig *oldpc = (struct PsdConfig *) pd->pd_Configs.lh_Head;
+        oldpc->pc_Node.ln_Succ;
+        oldpc = (struct PsdConfig *) oldpc->pc_Node.ln_Succ) {
+        if(oldpc == pc) {
+            continue;
+        }
+        for(pif = (struct PsdInterface *) oldpc->pc_Interfaces.lh_Head;
+            pif->pif_Node.ln_Succ;
+            pif = (struct PsdInterface *) pif->pif_Node.ln_Succ) {
+            for(pep = (struct PsdEndpoint *) pif->pif_EPs.lh_Head;
+                pep->pep_Node.ln_Succ;
+                pep = (struct PsdEndpoint *) pep->pep_Node.ln_Succ) {
+                pep->pep_StreamsAlloc = 0;
+                pep->pep_Token = NULL;
+            }
+        }
+    }
+
     /* the currently selected alternate of each interface heads pc_Interfaces */
     for(pif = (struct PsdInterface *) pc->pc_Interfaces.lh_Head;
         pif->pif_Node.ln_Succ;
@@ -2955,11 +2968,9 @@ static LONG pContextConfigureEndpoints(struct PsdBase *ps, struct PsdPipe *pp, U
                    without stream arrays; stale stream bookkeeping here would
                    make pCtxEnsureStreams skip the re-alloc and let stream
                    users run against phantom rings (mirror of the drop path
-                   in pContextSetInterface). Endpoints of a previously active
-                   *other* config are not walked here - nothing selects
-                   between multi-config devices today. The token is rewritten
-                   below only on success; pre-clearing covers the failure
-                   path too. */
+                   in pContextSetInterface); the other configurations were
+                   cleared above. The token is rewritten below only on
+                   success; pre-clearing covers the failure path too. */
                 pep->pep_StreamsAlloc = 0;
                 pep->pep_Token = NULL;
                 pCtxFillEndpointDesc(&eds[cnt++], pif, pep,
@@ -3083,7 +3094,7 @@ static void pContextUpdateHub(struct PsdBase *ps, struct PsdDevice *pd)
     uho.uho_NumPorts = pd->pd_HubNumPorts;
     uho.uho_TTThinkTime = pd->pd_HubThinkTime;
     uho.uho_MultiTT = (pd->pd_Flags & PDFF_MULTITT) ? 1 : 0;
-    uho.uho_HdrDecLat = (UBYTE) pd->pd_HubHdrDecLat; /* SS hubs (hubss.class); 0 otherwise */
+    uho.uho_HdrDecLat = (UBYTE) pd->pd_HubHdrDecLat; /* SS hubs (hubss.usbclass); 0 otherwise */
     uho.uho_HubDelay = pd->pd_HubDelay;
 
     ioerr = pCtxDoOpOnDevice(ps, pd, NSCMD_USB_UPDATE_HUB, &uho, sizeof(uho));
@@ -4436,6 +4447,13 @@ struct PsdDevice * (psdEnumerateDevice)(struct PsdPipe * pp asm("a1"), struct Ps
     pAllocDescriptor(pd, (UBYTE *) &usdd);
     pd->pd_Flags |= PDFF_HASDEVDESC;
     pd->pd_USBVers = AROS_LE2WORD(usdd.bcdUSB);
+    /* A root hub's speed is its controller's: a USB 2.0 root hub is high
+       speed (hub.usbclass enforces split transactions below it), a full-speed
+       controller's stays full speed. The SuperSpeed root hub is flagged
+       before enumeration (psdEnumerateHardware). */
+    if(!pd->pd_Hub && (pd->pd_USBVers >= 0x200) && !(pd->pd_Flags & PDFF_SUPERSPEED)) {
+        pd->pd_Flags |= PDFF_HIGHSPEED;
+    }
     pd->pd_DevClass = usdd.bDeviceClass;
     pd->pd_DevSubClass = usdd.bDeviceSubClass;
     pd->pd_DevProto = usdd.bDeviceProtocol;
@@ -4828,8 +4846,12 @@ BOOL (psdSuspendDevice)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm
     struct PsdUsbClass *puc;
     struct PsdDevice *hubpd;
     APTR binding;
-    BOOL res = FALSE;
-    BOOL agreed = FALSE;
+    BOOL ok = FALSE;        /* no step has failed yet; each runs only while set.
+                               Returned: the device is suspended */
+    BOOL agreed = FALSE;    /* the bindings agreed to suspend */
+    BOOL marked = FALSE;    /* pd_Suspending raised, to be lowered at the end */
+    BOOL parked = FALSE;    /* the parent hub was asked to park the port */
+    BOOL calledoff = FALSE; /* a transfer started: not a failure */
 
     KPRINTF(5, ("psdSuspendDevice(0x%08lx)\n", pd));
     if(pd) {
@@ -4848,31 +4870,49 @@ BOOL (psdSuspendDevice)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm
         hubpd = pd->pd_Hub;
 
         psdLockWriteDevice(pd);
-        res = agreed = psdSuspendBindings(pd);
+        ok = agreed = psdSuspendBindings(pd);
         psdUnlockDevice(pd);
-        if(res && hubpd) {
+        if(ok && hubpd) {
             /* wake arming needs a live EP0 - before the ring quiesce below.
                Skipped for a root hub: its EP0 is emulated inside the HCD and
                there is no upstream link it could wake the host over. */
             pArmRemoteWakeup(ps, pd);
         }
-        if(res && pd->pd_Hardware->phw_ContextBackend) {
+        if(ok) {
+            /* The bindings answered for the IO running when they were asked.
+               A transfer that started since then calls the suspend off, and
+               from here one that starts wakes the device once it is parked
+               (pTransferBegin): the mark goes up before the count is read,
+               the reverse of a transfer's order, so each one is either
+               counted here or sees the mark.  After the wake arming, whose
+               own transfers are done by now, and after the bindings, so a
+               hub's suspend of its ports over its own EP0 does not count. */
+            pd->pd_Suspending = TRUE;
+            marked = TRUE;
+            __asm__ __volatile__("" ::: "memory");
+            if(pd->pd_IOBusyCount) {
+                ok = FALSE;
+                calledoff = TRUE;
+            }
+        }
+        if(ok && pd->pd_Hardware->phw_ContextBackend) {
             /* quiesce the endpoint rings before the hub class parks the port
                in U3 (xHCI 4.15.1) */
             struct UhcdSetSuspend sso;
             memset(&sso, 0, sizeof(sso));
             sso.sso_DeviceHandle = pd->pd_Handle;
             sso.sso_Suspend = 1;
-            res = (pCtxDoOpOnDevice(ps, pd, NSCMD_USB_SET_SUSPEND, &sso, sizeof(sso)) == 0);
+            ok = (pCtxDoOpOnDevice(ps, pd, NSCMD_USB_SET_SUSPEND, &sso, sizeof(sso)) == 0);
         }
-        if(res) {
+        if(ok) {
             /* Only the hub class writes DA_IsSuspended, so if it never runs the
                device is not suspended, however well the steps above went. */
-            res = FALSE;
+            ok = FALSE;
             if(hubpd) {
                 psdLockReadDevice(pd);
                 if((binding = hubpd->pd_DevBinding) && (puc = hubpd->pd_ClsBinding)) {
-                    res = usbDoMethod(UCM_HubSuspendDevice, binding, pd);
+                    parked = TRUE;
+                    ok = usbDoMethod(UCM_HubSuspendDevice, binding, pd);
                 }
                 psdUnlockDevice(pd);
             } else {
@@ -4897,10 +4937,10 @@ BOOL (psdSuspendDevice)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm
                    not the whole controller. */
                 psdSetAttrs(PGA_DEVICE, pd, DA_IsSuspended, TRUE, TAG_END);
                 psdSendEvent(EHMB_DEVSUSPENDED, pd, NULL);
-                res = TRUE;
+                ok = TRUE;
             }
         }
-        if(!res) {
+        if(!ok) {
             /* Roll back. Any failure above - a binding that refused halfway
                through psdSuspendBindings(), a failed ring quiesce, a parent hub
                with no class binding, a hub that could not park the port - leaves
@@ -4915,11 +4955,13 @@ BOOL (psdSuspendDevice)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm
                reach psdHubReleaseDevBinding(), which takes psdLockWriteDevice()
                on this same device, and a shared->exclusive promotion only
                succeeds for the sole reader. */
-            if(hubpd && (hubpd->pd_Flags & PDFF_CONNECTED)) {
+            if(parked && (hubpd->pd_Flags & PDFF_CONNECTED)) {
                 /* the park may have been delivered even though the transfer
-                   reported an error - unpark before resuming. Skipped for a hub
-                   that is already gone: it would only cost another timeout, and
-                   for a root hub, which has no parent to unpark. */
+                   reported an error - unpark before resuming. A port never
+                   asked to park (a refusal, a failed quiesce, a suspend called
+                   off) is left alone, and so is a hub that is already gone: it
+                   would only cost another timeout. A root hub has no parent to
+                   unpark. */
                 psdLockReadDevice(pd);
                 if((binding = hubpd->pd_DevBinding) && (puc = hubpd->pd_ClsBinding)) {
                     usbDoMethod(UCM_HubResumeDevice, binding, pd);
@@ -4930,15 +4972,37 @@ BOOL (psdSuspendDevice)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm
                idempotent, so it is the whole binding + ring rollback. */
             psdResumeBindings(pd);
         }
+
+        if(marked) {
+            /* A transfer that started while the device was being suspended
+               waits on a quiesced ring: wake the device for it, and report it
+               awake - a hub suspending its ports must not park itself above
+               it.  After a roll back it is running already.  Collected under
+               Forbid(), as pTransferBegin() leaves it. */
+            Forbid();
+            pd->pd_Suspending = FALSE;
+            BOOL wake = pd->pd_WakeWanted;
+            pd->pd_WakeWanted = FALSE;
+            Permit();
+            if(wake && ok && psdResumeDevice(pd)) {
+                ok = FALSE;
+                calledoff = TRUE;
+            }
+        }
     }
     /* A binding that would not have it has said so itself
-       (psdSuspendBindings); what failed after the bindings agreed has not. */
-    if(pd && agreed && !res) {
+       (psdSuspendBindings); a transfer that called it off is no failure;
+       what failed after the bindings agreed has not been reported yet. */
+    if(calledoff) {
+        psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
+                       "Not suspending '%s': a transfer started.",
+                       pd->pd_ProductStr);
+    } else if(pd && agreed && !ok) {
         psdAddErrorMsg(RETURN_ERROR, (STRPTR) libname,
                        "Suspending of device '%s' failed.",
                        pd->pd_ProductStr);
     }
-    return(res);
+    return ok;
 }
 /* \\\ */
 
@@ -5237,11 +5301,9 @@ BOOL (psdResetDevice)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm("
     }
     psdUnlockDevice(pd);
 
-    if(res) {
-        /* the reset cleared U1/U2/LTM arming on the device - ask for a fresh
-           link-power sweep (event handler task, non-blocking) */
-        ps->ps_LinkPowerReq = TRUE;
-    } else {
+    /* the U1/U2/LTM arming the reset cleared is restored by psdSetDeviceConfig()
+       above (pLinkPowerArm) */
+    if(!res) {
         psdAddErrorMsg(RETURN_ERROR, (STRPTR) libname,
                        "Restoring configuration of '%s' after reset failed.",
                        pd->pd_ProductStr);
@@ -5482,7 +5544,11 @@ struct PsdDevice * (psdEnumerateHardware)(struct PsdHardware * phw asm("a0"), st
             return phw->phw_RootDevice;
         }
 
-        pd->pd_Flags |= PDFF_CONNECTED | PDFF_HIGHSPEED;
+        /* No speed flag: the root hub is the driver's emulation, not a device
+           on a link. It is enumerated as full speed - its own bMaxPacketSize0
+           is taken - and promoted to high speed by its bcdUSB
+           (psdEnumerateDevice). A full-speed controller's stays full speed. */
+        pd->pd_Flags |= PDFF_CONNECTED;
         pp->pp_IOReq.iouh_Req.io_Command = UHCMD_CONTROLXFER;
 
         KPRINTF(1, ("Enumerating normal RootHub...\n"));
@@ -5562,8 +5628,9 @@ void (psdRemHardware)(struct PsdHardware * phw asm("a0"), struct PsdBase * ps as
     pd = (struct PsdDevice *) phw->phw_Devices.lh_Head;
     while(pd->pd_Node.ln_Succ) {
         pFreeBindings(ps, pd);
-        pFreeDevice(ps, pd);
+        /* before the free; the note still arrives after it (identity only) */
         psdSendEvent(EHMB_REMDEVICE, pd, NULL);
+        pFreeDevice(ps, pd);
         pd = (struct PsdDevice *) phw->phw_Devices.lh_Head;
     }
     pd = (struct PsdDevice *) phw->phw_DeadDevices.lh_Head;
@@ -5618,14 +5685,34 @@ void (psdRemHardware)(struct PsdHardware * phw asm("a0"), struct PsdBase * ps as
     psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
                    "Removed hardware %s/%ld.",
                    phw->phw_DevName, phw->phw_Unit);
+    /* before the free; the note still arrives after it (identity only) */
+    psdSendEvent(EHMB_REMHARDWARE, phw, NULL);
     psdFreeVec(phw->phw_DevName);
     psdFreeVec(phw->phw_ProductName);
     psdFreeVec(phw->phw_Manufacturer);
     psdFreeVec(phw->phw_Description);
     psdFreeVec(phw->phw_Copyright);
     psdFreeVec(phw);
-    psdSendEvent(EHMB_REMHARDWARE, phw, NULL);
     KPRINTF(1, ("FreeHardware(0x%08lx) done\n", phw));
+}
+/* \\\ */
+
+/* /// "pPoseidonLoaded()" */
+/* TRUE if Poseidon is loaded (<nep_otherstack.h>), which refuses what (a controller,
+   or NULL for the whole config) with a log line. */
+static BOOL pPoseidonLoaded(struct PsdBase *ps, CONST_STRPTR what)
+{
+    UWORD other = nepPoseidonLoaded();
+    if(!other) {
+        return FALSE;
+    }
+    if(what) {
+        psdAddErrorMsg(RETURN_ERROR, (STRPTR) libname, "%s not added: " NEP_OTHERSTACK_TXT,
+                       (STRPTR) what, (LONG) other);
+    } else {
+        psdAddErrorMsg(RETURN_ERROR, (STRPTR) libname, NEP_OTHERSTACK_TXT, (LONG) other);
+    }
+    return TRUE;
 }
 /* \\\ */
 
@@ -5648,11 +5735,14 @@ struct PsdHardware * (psdAddHardware)(STRPTR name asm("a0"), ULONG unit asm("d0"
        second PsdHardware, a second device task and a second root-hub enumeration
        of the same controller -- which is what happens when a Kickstart-resident
        stack has already added the host controller and S:User-Startup's
-       "AddUSBHardware xhci.device 0" line adds it again. */
+       "USBAddHardware xhci.device 0" line adds it again. */
     if(pFindHardware(ps, name, unit)) {
         psdAddErrorMsg(RETURN_WARN, (STRPTR) libname,
                        "Hardware %s/%ld is already installed.", name, unit);
         return(NULL);
+    }
+    if(pPoseidonLoaded(ps, name)) {
+        return NULL;
     }
 
     if((phw = psdAllocVec(sizeof(struct PsdHardware)))) {
@@ -6015,6 +6105,80 @@ static inline void pActivityEnd(struct PsdPipe *pp, struct PsdBase *ps)
 }
 /* \\\ */
 
+/* /// "Transfer start vs suspend" */
+/* A transfer counts itself busy (pActivityBegin) BEFORE it looks at the
+   device's power state, and psdSuspendDevice() raises pd_Suspending BEFORE
+   it reads the busy count: so each counted transfer is either seen there,
+   which calls the suspend off, or sees the mark.  None reaches a ring the
+   suspend quiesces unnoticed, where the HCD would keep it for a resume
+   nobody asks for.  A transfer that finds the device suspended wakes it;
+   one that finds it being suspended leaves pd_WakeWanted, and
+   psdSuspendDevice() wakes the device the moment it is parked, the
+   transfer waiting on the quiesced ring meanwhile.
+   The transfer reads the mark before PDFF_SUSPENDED, the reverse of the
+   suspend, which sets the flag (the park) before it lowers the mark: a mark
+   read low and gone already means the flag is read set.  Read the other
+   way round, a suspend running between the two reads gets past both.
+   Compiler barriers order all of this: there is one CPU, it takes an
+   interrupt, and so a task switch, only between 68k instructions.
+   Interrupt transfers are not counted (pp_BusyWeight 0): a listener parked
+   across a suspend is meant to be, and a synchronous one started before
+   the mark ends at its NAK timeout, if its pipe has one. */
+
+/* Take back a pActivityBegin() whose transfer did not go out. */
+static inline void pActivityUndo(struct PsdPipe *pp)
+{
+    pp->pp_Flags &= ~PFF_ACTIVITY;
+    pp->pp_Device->pd_IOBusyCount -= pp->pp_BusyWeight;
+}
+
+/**
+ * pTransferBegin - account a transfer's start and wake its device for it
+ * @pp: the pipe the transfer goes out on
+ * @ps: library base
+ *
+ * Call right before the submit, and before data and length are filled in:
+ * the wake can run transfers on this very pipe.  (Those also overwrite the
+ * setup packet, which callers set before; a hub's resume only repeats an
+ * unpark that way.)  pCompletePipe() balances the
+ * count at completion delivery.  The common case, a device awake and not
+ * being suspended, costs one test.  The note for psdSuspendDevice() is left
+ * under Forbid(), as it is collected, so neither slips past the other.
+ */
+static void pTransferBegin(struct PsdPipe *pp, struct PsdBase *ps)
+{
+    struct PsdDevice *pd = pp->pp_Device;
+    BOOL woken = FALSE;
+
+    for(;;) {
+        pActivityBegin(pp, ps);
+        __asm__ __volatile__("" ::: "memory"); /* the count is out before the state is read */
+        BOOL suspending = pd->pd_Suspending;
+        __asm__ __volatile__("" ::: "memory"); /* the mark before the flag: see above */
+        if(!suspending && !(pd->pd_Flags & PDFF_SUSPENDED)) {
+            return;
+        }
+        Forbid();
+        if(pd->pd_Suspending) {
+            pd->pd_WakeWanted = TRUE;
+            Permit();
+            return;
+        }
+        Permit();
+        if(woken) {
+            return; /* the resume did not take: go on, as ever */
+        }
+        /* Suspended: wake it with this transfer uncounted, then count it
+           again.  The resume can run transfers on this very pipe - a hub's
+           class unparks its ports over its EP0 - and each of them pairs
+           its own count through PFF_ACTIVITY. */
+        pActivityUndo(pp);
+        psdResumeDevice(pd);
+        woken = TRUE;
+    }
+}
+/* \\\ */
+
 /* Note a halted bulk/interrupt endpoint at completion delivery: most classes
  * never send the CLEAR_FEATURE(ENDPOINT_HALT) the device needs, so the
  * event handler task clears it on their behalf (pStallRecoverySweep).  The
@@ -6251,19 +6415,16 @@ LONG (psdDoPipe)(struct PsdPipe * pp asm("a1"), APTR data asm("a0"), ULONG len a
     KPRINTF(2, ("psdDoPipe(0x%08lx, 0x%08lx, %ld)\n", pp, data, len));
 
     if(pd->pd_Flags & PDFF_CONNECTED) {
-        if(pd->pd_Flags & PDFF_SUSPENDED) {
-            // make sure the device is up and running before trying to send a new pipe
-            psdResumeDevice(pd);
-        }
-
+        /* Begin before the submit: a synchronously completed (or rejected)
+           transfer delivers its balancing pActivityEnd() from pCompletePipe().
+           It also wakes a suspended device, which can use this pipe, so data
+           and length are filled in after it. */
+        pTransferBegin(pp, ps);
         pp->pp_IOReq.iouh_Data = data;
         pp->pp_IOReq.iouh_Length = len;
         if(!pp->pp_Endpoint) {
             pp->pp_IOReq.iouh_SetupData.wLength = AROS_WORD2LE(len);
         }
-        /* Begin before the submit: a synchronously completed (or rejected)
-           transfer delivers its balancing pActivityEnd() from pCompletePipe() */
-        pActivityBegin(pp, ps);
         pSubmitPipe(pp, ps);
         return(psdWaitPipe(pp));
     } else {
@@ -6281,17 +6442,12 @@ void (psdSendPipe)(struct PsdPipe * pp asm("a1"), APTR data asm("a0"), ULONG len
     struct PsdDevice *pd = pp->pp_Device;
     KPRINTF(2, ("psdSendPipe(0x%08lx, 0x%08lx, %ld)\n", pp, data, len));
     if(pd->pd_Flags & PDFF_CONNECTED) {
-        if(pd->pd_Flags & PDFF_SUSPENDED) {
-            // make sure the device is up and running before trying to send a new pipe
-            psdResumeDevice(pd);
-        }
-
+        pTransferBegin(pp, ps);  /* before the submit, data and length: see psdDoPipe() */
         pp->pp_IOReq.iouh_Data = data;
         pp->pp_IOReq.iouh_Length = len;
         if(!pp->pp_Endpoint) {
             pp->pp_IOReq.iouh_SetupData.wLength = AROS_WORD2LE(len);
         }
-        pActivityBegin(pp, ps);  /* before the submit: see psdDoPipe() */
         pSubmitPipe(pp, ps);
     } else {
         psdDelayMS(50);
@@ -6301,6 +6457,42 @@ void (psdSendPipe)(struct PsdPipe * pp asm("a1"), APTR data asm("a0"), ULONG len
         pp->pp_WireReq = (struct IORequest *) &pp->pp_IOReq; /* nothing framed: complete in place */
         pCompletePipe(pp);
     }
+}
+/* \\\ */
+
+/* /// "pWaitPipeUnscored()" */
+/* Wait for one pipe's reply and dequeue it; returns its io_Error. No dead
+   scoring: psdAbortPipe() collects its shadow message here, whose success
+   says nothing about the device. */
+static LONG pWaitPipeUnscored(struct PsdPipe *pp)
+{
+    ULONG sigs = 0;
+    KPRINTF(5, ("pWaitPipeUnscored(0x%08lx)\n", pp));
+    while(pp->pp_Msg.mn_Node.ln_Type == NT_MESSAGE) {
+        KPRINTF(5, ("ln_Type = %02lx\n", pp->pp_Msg.mn_Node.ln_Type));
+        sigs |= Wait(1L<<pp->pp_MsgPort->mp_SigBit);
+        KPRINTF(5, ("sigs = 0x%08lx\n", sigs));
+    }
+    Forbid();
+    if(pp->pp_Msg.mn_Node.ln_Type == NT_REPLYMSG) {
+        /* NT_REPLYMSG does not mean "still queued here": ReplyMsg() sets it and
+           GetMsg() is documented only to unlink, so a pipe a class
+           reaped itself (bootkeyboard, lan78xx, camdusbmidi do) looks identical.
+           A blind Remove() here would relink stale neighbours. */
+        struct Node *n = pp->pp_MsgPort->mp_MsgList.lh_Head;
+        while(n->ln_Succ) {
+            if(n == &pp->pp_Msg.mn_Node) {
+                Remove(n);
+                break;
+            }
+            n = n->ln_Succ;
+        }
+        pp->pp_Msg.mn_Node.ln_Type = NT_FREEMSG;
+    }
+    /* avoid signals getting lost for other messages arriving */
+    SetSignal(sigs, sigs);
+    Permit();
+    return pp->pp_IOReq.iouh_Req.io_Error;
 }
 /* \\\ */
 
@@ -6334,7 +6526,7 @@ void (psdAbortPipe)(struct PsdPipe * pp asm("a1"), struct PsdBase * ps asm("a6")
 
         npp->pp_AbortPipe = pp;
         PutMsg(&pp->pp_Device->pd_Hardware->phw_TaskMsgPort, &npp->pp_Msg);
-        psdWaitPipe(npp);
+        pWaitPipeUnscored(npp);   /* not psdWaitPipe(): the shadow must not score */
         psdFreeVec(npp);
     }
 }
@@ -6347,35 +6539,9 @@ void (psdAbortPipe)(struct PsdPipe * pp asm("a1"), struct PsdBase * ps asm("a6")
    (pCtxDoOp), which never calls pActivityBegin(), waits here like anyone else. */
 LONG (psdWaitPipe)(struct PsdPipe * pp asm("a1"), struct PsdBase * ps asm("a6"))
 {
-    ULONG sigs = 0;
     struct PsdDevice *pd = pp->pp_Device;
-    LONG ioerr;
-    KPRINTF(5, ("psdWaitPipe(0x%08lx)\n", pp));
-    while(pp->pp_Msg.mn_Node.ln_Type == NT_MESSAGE) {
-        KPRINTF(5, ("ln_Type = %02lx\n", pp->pp_Msg.mn_Node.ln_Type));
-        sigs |= Wait(1L<<pp->pp_MsgPort->mp_SigBit);
-        KPRINTF(5, ("sigs = 0x%08lx\n", sigs));
-    }
-    Forbid();
-    if(pp->pp_Msg.mn_Node.ln_Type == NT_REPLYMSG) {
-        /* NT_REPLYMSG does not mean "still queued here": ReplyMsg() sets it and
-           GetMsg() is documented only to unlink, so a pipe a class
-           reaped itself (bootkeyboard, lan78xx, camdusbmidi do) looks identical.
-           A blind Remove() here would relink stale neighbours. */
-        struct Node *n = pp->pp_MsgPort->mp_MsgList.lh_Head;
-        while(n->ln_Succ) {
-            if(n == &pp->pp_Msg.mn_Node) {
-                Remove(n);
-                break;
-            }
-            n = n->ln_Succ;
-        }
-        pp->pp_Msg.mn_Node.ln_Type = NT_FREEMSG;
-    }
-    /* avoid signals getting lost for other messages arriving */
-    SetSignal(sigs, sigs);
-    Permit();
-    ioerr = pp->pp_IOReq.iouh_Req.io_Error;
+    LONG ioerr = pWaitPipeUnscored(pp);
+
     switch(ioerr) {
     case UHIOERR_TIMEOUT:
         pd->pd_DeadCount++;
@@ -6387,6 +6553,8 @@ LONG (psdWaitPipe)(struct PsdPipe * pp asm("a1"), struct PsdBase * ps asm("a6"))
     case UHIOERR_XACTERROR:     /* context ABI: a failed transaction, like CRC */
     case UHIOERR_SPLITERROR:
         pd->pd_DeadCount++;
+        break;
+    case IOERR_ABORTED:         /* cancelled by its owner: says nothing about the device */
         break;
     case UHIOERR_RUNTPACKET:
     default:
@@ -7087,8 +7255,10 @@ LONG (psdGetStreamError)(struct PsdPipeStream * pps asm("a1"), struct PsdBase * 
  * device-removal hub task via the RT-ISO release hook on unplug).  A running stream counts
  * as busy IO, so the command takes the normal pActivityBegin()/delivery-End pair, matching
  * the original DoIO-era accounting; the stamps are wanted too: a STOP marks the end of the
- * stream's activity, so the device gets its full idle timeout before the sweep looks at it. */
-static LONG pRtIsoForwardCmd(struct PsdPipe *pp, struct PsdBase *ps)
+ * stream's activity, so the device gets its full idle timeout before the sweep looks at it.
+ * wake: the command starts a stream, which wakes the device as a transfer does
+ * (pTransferBegin); the others leave a suspended device asleep. */
+static LONG pRtIsoForwardCmd(struct PsdPipe *pp, struct PsdBase *ps, BOOL wake)
 {
     struct MsgPort *port = CreateMsgPort();
     LONG ioerr;
@@ -7096,7 +7266,11 @@ static LONG pRtIsoForwardCmd(struct PsdPipe *pp, struct PsdBase *ps)
         return(UHIOERR_OUTOFMEMORY);
     }
     pp->pp_MsgPort = pp->pp_Msg.mn_ReplyPort = port;
-    pActivityBegin(pp, ps);            /* balanced by pCompletePipe() at completion delivery */
+    if(wake) {                         /* balanced by pCompletePipe() at completion delivery */
+        pTransferBegin(pp, ps);
+    } else {
+        pActivityBegin(pp, ps);
+    }
     pSubmitPipe(pp, ps);               /* quick: BeginIO+IOF_QUICK; else relay PutMsg */
     ioerr = psdWaitPipe(pp);
     pp->pp_MsgPort = pp->pp_Msg.mn_ReplyPort = NULL;
@@ -7141,7 +7315,7 @@ struct PsdRTIsoHandler * (psdAllocRTIsoHandlerA)(struct PsdEndpoint * pep asm("a
             psdSetAttrsA(PGA_RTISO, prt, tags);
             pp->pp_IOReq.iouh_Req.io_Command = UHCMD_ADDISOHANDLER;
             pp->pp_IOReq.iouh_Data = &prt->prt_RTIso;
-            ioerr = pRtIsoForwardCmd(pp, ps);
+            ioerr = pRtIsoForwardCmd(pp, ps, FALSE);
             if(!ioerr) {
                 Forbid();
                 AddTail(&prt->prt_Device->pd_RTIsoHandlers, &prt->prt_Node);
@@ -7172,8 +7346,13 @@ void (psdFreeRTIsoHandler)(struct PsdRTIsoHandler * prt asm("a1"), struct PsdBas
     Remove(&prt->prt_Node);
     Permit();
     pp = prt->prt_Pipe;
+    if(prt->prt_Running) {
+        /* freed without psdStopRTIso(): the stream ends with the handler */
+        --pp->pp_Device->pd_IOBusyCount;
+        prt->prt_Running = FALSE;
+    }
     pp->pp_IOReq.iouh_Req.io_Command = UHCMD_REMISOHANDLER;
-    pRtIsoForwardCmd(pp, ps);
+    pRtIsoForwardCmd(pp, ps, FALSE);
     psdFreePipe(pp);
     psdFreeVec(prt);
 }
@@ -7189,17 +7368,15 @@ LONG (psdStartRTIso)(struct PsdRTIsoHandler * prt asm("a1"), struct PsdBase * ps
         return UHIOERR_BADPARAMS;
     }
     pp = prt->prt_Pipe;
-    if(pp->pp_Device->pd_Flags & PDFF_SUSPENDED) {
-        // make sure the device is up and running before trying to send a new pipe
-        psdResumeDevice(pp->pp_Device);
-    }
     pp->pp_IOReq.iouh_Req.io_Command = UHCMD_STARTRTISO;
-    ioerr = pRtIsoForwardCmd(pp, ps);
-    if(!ioerr) {
+    ioerr = pRtIsoForwardCmd(pp, ps, TRUE);
+    if(!ioerr && !prt->prt_Running) {
         /* not pActivityBegin(): this is a hold for the whole lifetime of the
-           running stream, released by psdStopRTIso(), on top of the pair that
-           pRtIsoForwardCmd() already balanced around the START command itself */
+           running stream, released by psdStopRTIso() or psdFreeRTIsoHandler(),
+           on top of the pair that pRtIsoForwardCmd() already balanced around
+           the START command itself. One per stream, however often started. */
         ++pp->pp_Device->pd_IOBusyCount;
+        prt->prt_Running = TRUE;
     }
     return(ioerr);
 }
@@ -7216,9 +7393,10 @@ LONG (psdStopRTIso)(struct PsdRTIsoHandler * prt asm("a1"), struct PsdBase * ps 
     }
     pp = prt->prt_Pipe;
     pp->pp_IOReq.iouh_Req.io_Command = UHCMD_STOPRTISO;
-    ioerr = pRtIsoForwardCmd(pp, ps);
-    if(!ioerr) {
+    ioerr = pRtIsoForwardCmd(pp, ps, FALSE);
+    if(!ioerr && prt->prt_Running) {
         --pp->pp_Device->pd_IOBusyCount;   /* release psdStartRTIso()'s lifetime hold */
+        prt->prt_Running = FALSE;
     }
     return(ioerr);
 }
@@ -7346,11 +7524,12 @@ void (psdRemClass)(struct PsdUsbClass * puc asm("a1"), struct PsdBase * ps asm("
     psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
                    "Removed class %s.",
                    puc->puc_ClassBase->lib_Node.ln_Name);
+    /* before the free; the note still arrives after it (identity only) */
+    psdSendEvent(EHMB_REMCLASS, puc, NULL);
     CloseLibrary(puc->puc_ClassBase);
     psdFreeVec(puc->puc_ClassName);
     psdFreeVec(puc->puc_FullPath);
     psdFreeVec(puc);
-    psdSendEvent(EHMB_REMCLASS, puc, NULL);
 }
 /* \\\ */
 
@@ -7416,12 +7595,31 @@ void (psdRemErrorMsg)(struct PsdErrorMsg * pem asm("a0"), struct PsdBase * ps as
 
 /* *** Bindings *** */
 
+/* /// "pFindIfBinding()" */
+/* The first interface of any configuration of pd that puc is bound to, or
+   NULL. The caller holds the PBase lock. */
+static struct PsdInterface * pFindIfBinding(struct PsdDevice *pd, struct PsdUsbClass *puc)
+{
+    struct PsdConfig *pc;
+    struct PsdInterface *pif;
+
+    ForeachNode(&pd->pd_Configs, pc) {
+        ForeachNode(&pc->pc_Interfaces, pif) {
+            if(pif->pif_IfBinding && (pif->pif_ClsBinding == puc)) {
+                return pif;
+            }
+        }
+    }
+    return NULL;
+}
+/* \\\ */
+
 /* /// "pReleaseAfterDOSBindings()" */
 /*
  * Called the first time a class scan happens from a process after the stack
  * was started as a task (i.e. before DOS was available). Classes that flag
- * themselves with UCCA_AfterDOSRestart (bootmouse.class, bootkeyboard.class)
- * are only meant to bridge the gap until the full classes (hid.class) can be
+ * themselves with UCCA_AfterDOSRestart (bootmouse.usbclass, bootkeyboard.usbclass)
+ * are only meant to bridge the gap until the full classes (hid.usbclass) can be
  * loaded, so their bindings are released here to let the subsequent scan
  * hand the devices over. All classes are told about DOS being available.
  */
@@ -7441,12 +7639,13 @@ static void pReleaseAfterDOSBindings(struct PsdBase *ps)
 
         if(restartme && puc->puc_UseCnt) {
             struct PsdDevice *pd;
-            struct PsdConfig *pc;
-            struct PsdInterface *pif;
 
-            /* Well, try to release the open bindings in a best effort attempt */
+            /* Well, try to release the open bindings in a best effort attempt.
+               Each release drops the lock, so the walk starts over after it. */
             pd = NULL;
             while((pd = psdGetNextDevice(pd))) {
+                struct PsdInterface *pif;
+
                 if(pd->pd_DevBinding && (pd->pd_ClsBinding == puc) && (!(pd->pd_Flags & PDFF_APPBINDING))) {
                     psdUnlockPBase();
                     psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
@@ -7457,19 +7656,14 @@ static void pReleaseAfterDOSBindings(struct PsdBase *ps)
                     pd = NULL; /* restart */
                     continue;
                 }
-                ForeachNode(&pd->pd_Configs, pc) {
-                    ForeachNode(&pc->pc_Interfaces, pif) {
-                        if(pif->pif_IfBinding && (pif->pif_ClsBinding == puc)) {
-                            psdUnlockPBase();
-                            psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
-                                           "AfterDOS: Temporarily releasing %s %s binding to %s.",
-                                           puc->puc_ClassName, "interface", pd->pd_ProductStr);
-                            psdReleaseIfBinding(pif);
-                            psdLockReadPBase();
-                            pd = NULL; /* restart */
-                            continue;
-                        }
-                    }
+                if((pif = pFindIfBinding(pd, puc))) {
+                    psdUnlockPBase();
+                    psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
+                                   "AfterDOS: Temporarily releasing %s %s binding to %s.",
+                                   puc->puc_ClassName, "interface", pd->pd_ProductStr);
+                    psdReleaseIfBinding(pif);
+                    psdLockReadPBase();
+                    pd = NULL; /* restart */
                 }
             }
         }
@@ -7497,7 +7691,7 @@ void (psdClassScan)(struct PsdBase * ps asm("a6"))
     /*
      * First scan from a process after the stack came up as a task before DOS:
      * the boot classes only bridged the gap, so release their bindings now and
-     * let the classes that are available by now (hid.class) take the devices
+     * let the classes that are available by now (hid.usbclass) take the devices
      * over. This used to happen only in psdParseCfg(), i.e. only when a saved
      * prefs file existed, leaving bootmouse/bootkeyboard in charge forever
      * on systems without one.
@@ -7726,6 +7920,67 @@ void (psdUnbindAll)(struct PsdBase * ps asm("a6"))
 }
 /* \\\ */
 
+/* /// "pFindForcedBinding()" */
+/* The class name a device (ifid NULL) or interface is forced to, as a
+   pointer into the live config, or NULL. The caller holds ps_ConfigLock. */
+static STRPTR pFindForcedBinding(struct PsdBase *ps, STRPTR devid, STRPTR ifid)
+{
+    struct PsdIFFContext *pic;
+    struct PsdIFFContext *mpic;
+    ULONG *chunk;
+
+    /* Find device config form. It contains all device config data */
+    pic = psdFindCfgForm(NULL, IFFFORM_DEVICECFG);
+    while(pic) {
+        /* Find DEVID-Chunk. Check if it matches our device id */
+        if(pMatchStringChunk(ps, pic, IFFCHNK_DEVID, devid)) {
+            /* We found the correct device. Now if we need to store interface data, find the interface first */
+            if(!ifid) {
+                /* Search for device forced binding */
+                chunk = pFindCfgChunk(ps, pic, IFFCHNK_FORCEDBIND);
+                return chunk ? (STRPTR) &chunk[2] : NULL;
+            }
+            /* Search interface config form */
+            mpic = psdFindCfgForm(pic, IFFFORM_IFCFGDATA);
+            while(mpic) {
+                /* Found the form. Find the the ID String for the interface */
+                if(pMatchStringChunk(ps, mpic, IFFCHNK_IFID, ifid)) {
+                    /* ID did match, now check for forced binding */
+                    chunk = pFindCfgChunk(ps, mpic, IFFCHNK_FORCEDBIND);
+                    if(chunk) {
+                        return (STRPTR) &chunk[2];
+                    }
+                }
+                mpic = psdNextCfgForm(mpic);
+            }
+            return NULL;
+        }
+        pic = psdNextCfgForm(pic);
+    }
+    return NULL;
+}
+/* \\\ */
+
+/* /// "pCopyForcedBinding()" */
+/* As psdGetForcedBinding(), but the class name is copied to buf (size bytes,
+   cut short if longer) while the config is still locked: the class scan
+   holds on to it across binds that may rewrite the config. Returns buf, or
+   NULL if there is no forced binding. */
+static STRPTR pCopyForcedBinding(struct PsdBase *ps, STRPTR devid, STRPTR ifid, STRPTR buf, ULONG size)
+{
+    STRPTR owner;
+
+    pLockSemShared(ps, &ps->ps_ConfigLock);
+    owner = pFindForcedBinding(ps, devid, ifid);
+    if(owner) {
+        strncpy(buf, owner, size - 1);
+        buf[size - 1] = 0;
+    }
+    pUnlockSem(ps, &ps->ps_ConfigLock);
+    return owner ? buf : NULL;
+}
+/* \\\ */
+
 /* /// "psdHubClassScan()" */
 void (psdHubClassScan)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm("a6"))
 {
@@ -7739,6 +7994,7 @@ void (psdHubClassScan)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm(
     UWORD hasifbinding;
     BOOL mainif;
     STRPTR owner;
+    UBYTE ownerbuf[64];   /* forced class name, a copy (pCopyForcedBinding) */
 
     KPRINTF(5, ("psdClassScan()\n"));
 
@@ -7769,7 +8025,7 @@ void (psdHubClassScan)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm(
             pc = (struct PsdConfig *) pc->pc_Node.ln_Succ;
         }
 
-        owner = psdGetForcedBinding(pd->pd_IDString, NULL);
+        owner = pCopyForcedBinding(ps, pd->pd_IDString, NULL, ownerbuf, sizeof(ownerbuf));
         if((!hasifbinding) && owner) {
             puc = (struct PsdUsbClass *) ps->ps_Classes.lh_Head;
             while(puc->puc_Node.ln_Succ) {
@@ -7814,7 +8070,7 @@ void (psdHubClassScan)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm(
                                While probing, the interface tree stays untouched, so iteration is
                                simply firstpif followed by firstpif's pif_AlterIfs list. */
                             do {
-                                owner = psdGetForcedBinding(pd->pd_IDString, pif->pif_IDString);
+                                owner = pCopyForcedBinding(ps, pd->pd_IDString, pif->pif_IDString, ownerbuf, sizeof(ownerbuf));
                                 puc = (struct PsdUsbClass *) ps->ps_Classes.lh_Head;
                                 while(puc->puc_Node.ln_Succ) {
                                     KPRINTF(5, (">>>PING %s!\n", puc->puc_ClassName));
@@ -7912,7 +8168,7 @@ void (psdHubClassScan)(struct PsdDevice * pd asm("a0"), struct PsdBase * ps asm(
         if(!hasifbinding) {
             //pd->pd_DevBinding = (APTR) ~0UL;
             binding = NULL;
-            owner = psdGetForcedBinding(pd->pd_IDString, NULL);
+            owner = pCopyForcedBinding(ps, pd->pd_IDString, NULL, ownerbuf, sizeof(ownerbuf));
             puc = (struct PsdUsbClass *) ps->ps_Classes.lh_Head;
             while(puc->puc_Node.ln_Succ) {
                 binding = NULL;
@@ -8105,8 +8361,11 @@ void (psdRemEventHandler)(struct PsdEventHook * peh asm("a0"), struct PsdBase * 
 }
 /* \\\ */
 
-/* /// "psdSendEvent()" */
-void (psdSendEvent)(ULONG ehmt asm("d0"), APTR param1 asm("a0"), APTR param2 asm("a1"), struct PsdBase * ps asm("a6"))
+/* /// "pSendEventWithData()" */
+/* psdSendEvent(). With data, each note carries its own copy of len bytes of
+   it, behind the note in the same allocation, and Param2 points at that
+   copy: it lives exactly as long as the note. */
+static void pSendEventWithData(struct PsdBase *ps, ULONG ehmt, APTR param1, APTR param2, CONST_APTR data, ULONG len)
 {
     struct PsdEventNote *pen;
     struct PsdEventHook *peh;
@@ -8119,18 +8378,29 @@ void (psdSendEvent)(ULONG ehmt asm("d0"), APTR param1 asm("a0"), APTR param2 asm
     peh = (struct PsdEventHook *) ps->ps_EventHooks.lh_Head;
     while(peh->peh_Node.ln_Succ) {
         if(peh->peh_MsgMask & msgmask) {
-            if((pen = psdAllocVec(sizeof(struct PsdEventNote)))) {
+            if((pen = psdAllocVec(sizeof(struct PsdEventNote) + len))) {
                 pen->pen_Msg.mn_ReplyPort = &ps->ps_EventReplyPort;
                 pen->pen_Msg.mn_Length = sizeof(struct PsdEventNote);
                 pen->pen_Event = ehmt;
                 pen->pen_Param1 = param1;
                 pen->pen_Param2 = param2;
+                if(data) {
+                    pen->pen_Param2 = pen + 1;
+                    CopyMem((APTR) data, pen->pen_Param2, len);
+                }
                 PutMsg(peh->peh_MsgPort, &pen->pen_Msg);
             }
         }
         peh = (struct PsdEventHook *) peh->peh_Node.ln_Succ;
     }
     ReleaseSemaphore(&ps->ps_ReentrantLock);
+}
+/* \\\ */
+
+/* /// "psdSendEvent()" */
+void (psdSendEvent)(ULONG ehmt asm("d0"), APTR param1 asm("a0"), APTR param2 asm("a1"), struct PsdBase * ps asm("a6"))
+{
+    pSendEventWithData(ps, ehmt, param1, param2, NULL, 0);
 }
 /* \\\ */
 
@@ -8221,12 +8491,44 @@ static BOOL pMigrateCfgString(struct PsdBase *ps, struct PsdIFFContext *pic, ULO
 }
 /* \\\ */
 
+/* /// "pMigrateClassName()" */
+/* Replace a trailing NEP_OLDCLASSSUFFIX of the class name or path held in chunk
+   chnkid of pic with NEP_CLASSSUFFIX ("hid.class" -> "hid.usbclass"). Idempotent:
+   a new name does not end in the old suffix. Returns TRUE if the chunk was
+   rewritten. */
+static BOOL pMigrateClassName(struct PsdBase *ps, struct PsdIFFContext *pic, ULONG chnkid)
+{
+    ULONG *chnk = pFindCfgChunk(ps, pic, chnkid);
+    if(!chnk) {
+        return FALSE;
+    }
+    STRPTR str = (STRPTR) &chnk[2];
+    ULONG stem = strlen((const char *) str);
+    if((stem <= sizeof(NEP_OLDCLASSSUFFIX) - 1) ||
+       stricmp((const char *) &str[stem - (sizeof(NEP_OLDCLASSSUFFIX) - 1)], NEP_OLDCLASSSUFFIX)) {
+        return FALSE;
+    }
+    stem -= sizeof(NEP_OLDCLASSSUFFIX) - 1;
+    /* built first: pAddStringChunk() compacts pic's chunk buffer over str */
+    STRPTR newstr = psdAllocVec(stem + sizeof(NEP_CLASSSUFFIX));
+    if(!newstr) {
+        return FALSE;
+    }
+    memcpy(newstr, str, stem);
+    strcpy((char *) &newstr[stem], NEP_CLASSSUFFIX);
+    BOOL done = pAddStringChunk(ps, pic, chnkid, newstr);
+    psdFreeVec(newstr);
+    return done;
+}
+/* \\\ */
+
 /* /// "pMigrateCfg()" */
-/* Rewrite what Poseidon prefs data carries over in Poseidon's names: the class
-   paths of the UCLS forms and the attach/detach sound paths of the stack form,
-   and the prefs editor's owner key on the per-device and per-interface data.
-   Idempotent, so it runs wherever outside data enters the config. Returns TRUE
-   if anything was rewritten. */
+/* Rewrite what older prefs data carries over in old names: the class paths of the
+   UCLS forms (drawer and suffix), the attach/detach sound paths of the stack form,
+   the prefs editor's owner key on the per-device and per-interface data, and the
+   class names that key per-class settings, class data on devices and interfaces,
+   and forced bindings. Idempotent, so it runs wherever outside data enters the
+   config. Returns TRUE if anything was rewritten. */
 static BOOL pMigrateCfg(struct PsdBase *ps)
 {
     BOOL changed = FALSE;
@@ -8236,16 +8538,24 @@ static BOOL pMigrateCfg(struct PsdBase *ps)
     if(pic) {
         for(struct PsdIFFContext *subpic = psdFindCfgForm(pic, IFFFORM_USBCLASS); subpic; subpic = psdNextCfgForm(subpic)) {
             changed |= pMigrateCfgString(ps, subpic, IFFCHNK_NAME, NEP_OLDCLASSDRAWER, NEP_CLASSDRAWER);
+            changed |= pMigrateClassName(ps, subpic, IFFCHNK_NAME);
         }
         changed |= pMigrateCfgString(ps, pic, IFFCHNK_INSERTSND, NEP_OLDPRESETDRAWER, NEP_PRESETDRAWER);
         changed |= pMigrateCfgString(ps, pic, IFFCHNK_REMOVESND, NEP_OLDPRESETDRAWER, NEP_PRESETDRAWER);
     }
+    for(struct PsdIFFContext *cls = psdFindCfgForm(NULL, IFFFORM_CLASSCFG); cls; cls = psdNextCfgForm(cls)) {
+        changed |= pMigrateClassName(ps, cls, IFFCHNK_OWNER);
+    }
     for(struct PsdIFFContext *dev = psdFindCfgForm(NULL, IFFFORM_DEVICECFG); dev; dev = psdNextCfgForm(dev)) {
+        changed |= pMigrateClassName(ps, dev, IFFCHNK_FORCEDBIND);
         for(struct PsdIFFContext *data = psdFindCfgForm(dev, IFFFORM_DEVCFGDATA); data; data = psdNextCfgForm(data)) {
             changed |= pMigrateCfgString(ps, data, IFFCHNK_OWNER, NEP_OLDPREFS_OWNER, NEP_PREFS_OWNER);
+            changed |= pMigrateClassName(ps, data, IFFCHNK_OWNER);
         }
         for(struct PsdIFFContext *data = psdFindCfgForm(dev, IFFFORM_IFCFGDATA); data; data = psdNextCfgForm(data)) {
             changed |= pMigrateCfgString(ps, data, IFFCHNK_OWNER, NEP_OLDPREFS_OWNER, NEP_PREFS_OWNER);
+            changed |= pMigrateClassName(ps, data, IFFCHNK_OWNER);
+            changed |= pMigrateClassName(ps, data, IFFCHNK_FORCEDBIND);
         }
     }
     pUnlockSem(ps, &ps->ps_ConfigLock);
@@ -8253,14 +8563,27 @@ static BOOL pMigrateCfg(struct PsdBase *ps)
 }
 /* \\\ */
 
-/* /// "pLoadCfgFile()" */
-/* Load and apply one prefs file, migrating Poseidon names first (pMigrateCfg()).
-   Returns RETURN_OK, RETURN_WARN (no such file) or RETURN_ERROR (not a usable
-   prefs file). */
-static UWORD pLoadCfgFile(struct PsdBase *ps, STRPTR filename)
+/* How every release's prefs file starts: the stack form comes first, and the
+   global settings chunk first in it. */
+struct CfgFileHead {
+    ULONG form, formlen, type;          /* FORM <len> NEPC/PSDC; len counts from the type on */
+    ULONG stkform, stklen, stkc;        /* FORM <len> STKC */
+    ULONG gcfg, gcfglen;                /* GCFG <len> */
+};
+
+/* /// "pReadCfgFile()" */
+/* Read one prefs file whole: Neptune's own (FORM NEPC) or one of 6.0-6.2's
+   (FORM PSDC). A classic Poseidon (4.x) writes FORM PSDC too, but its global
+   settings chunk has another length: such a file is that stack's own, and its
+   settings neither fit nor are Neptune's to take. Returns RETURN_OK with *buf
+   (the caller frees it with psdFreeVec()), RETURN_WARN (no such file),
+   RETURN_ERROR (not a prefs file) or RETURN_FAIL (a classic Poseidon's,
+   reported here). */
+static UWORD pReadCfgFile(struct PsdBase *ps, STRPTR filename, ULONG **buf)
 {
     XPRINTF(10, ("Loading config file: %s\n", filename));
 
+    *buf = NULL;
     BPTR filehandle = Open(filename, MODE_OLDFILE);
     KPRINTF(1, ("File handle 0x%08lx\n", filehandle));
     if(!filehandle) {
@@ -8268,36 +8591,54 @@ static UWORD pLoadCfgFile(struct PsdBase *ps, STRPTR filename)
     }
 
     UWORD level = RETURN_ERROR;
-    ULONG formhead[3];
-    if((Read(filehandle, formhead, 12) == 12) &&
-       (AROS_LONG2BE(formhead[0]) == ID_FORM) && (AROS_LONG2BE(formhead[2]) == IFFFORM_PSDCFG)) {
-        ULONG formlen = AROS_LONG2BE(formhead[1]);
-        KPRINTF(1, ("Header OK, %lu bytes\n", formlen));
+    struct CfgFileHead head;
+    if((Read(filehandle, &head, sizeof(head)) == sizeof(head)) && (AROS_LONG2BE(head.form) == ID_FORM)) {
+        ULONG type = AROS_LONG2BE(head.type);
+        if((type == NEP_OLDPREFSFORM) &&
+           ((AROS_LONG2BE(head.stkc) != IFFFORM_STACKCFG) || (AROS_LONG2BE(head.gcfg) != IFFCHNK_GLOBALCFG) ||
+            (AROS_LONG2BE(head.gcfglen) != NEP_OLDGLOBALCFGLEN))) {
+            psdAddErrorMsg(RETURN_WARN, (STRPTR) libname,
+                           "'%s' was written by a classic Poseidon: not loaded.", filename);
+            level = RETURN_FAIL;
+        } else if((type == IFFFORM_NEPCFG) || (type == NEP_OLDPREFSFORM)) {
+            ULONG size = sizeof(head.form) + sizeof(head.formlen) + AROS_LONG2BE(head.formlen);
+            KPRINTF(1, ("Header OK, %lu bytes\n", size));
 
-        ULONG *buf = (ULONG *) psdAllocVec(formlen + 8);
-        if(buf) {
-            buf[0] = formhead[0];
-            buf[1] = formhead[1];
-            buf[2] = formhead[2];
-            if(Read(filehandle, &buf[3], formlen - 4) == formlen - 4) {
-                KPRINTF(1, ("Data read OK\n"));
-
-                psdReadCfg(NULL, buf);
-                BOOL migrated = pMigrateCfg(ps);
-                psdParseCfg();      /* records the live config as saved */
-
-                KPRINTF(1, ("All done\n"));
-                level = RETURN_OK;
-                /* a migrated config matches no file until it is saved */
-                if(migrated) {
-                    ps->ps_SavedConfigHash = ~ps->ps_ConfigHash;
+            ULONG *data = (size >= sizeof(head)) ? (ULONG *) psdAllocVec(size) : NULL;
+            if(data) {
+                CopyMem(&head, data, sizeof(head));
+                if(Read(filehandle, ((UBYTE *) data) + sizeof(head), size - sizeof(head)) == size - sizeof(head)) {
+                    KPRINTF(1, ("Data read OK\n"));
+                    *buf = data;
+                    level = RETURN_OK;
+                } else {
+                    psdFreeVec(data);
                 }
             }
-            psdFreeVec(buf);
         }
     }
     Close(filehandle);
     return(level);
+}
+/* \\\ */
+
+/* /// "pApplyCfg()" */
+/* Make buf, a whole prefs file, the live config. A 6.0-6.2 file becomes
+   Neptune's on the way: its form type here, its old names in pMigrateCfg().
+   TRUE if anything was converted. */
+static BOOL pApplyCfg(struct PsdBase *ps, ULONG *buf)
+{
+    struct CfgFileHead *head = (APTR) buf;
+    BOOL migrated = (AROS_LONG2BE(head->type) != IFFFORM_NEPCFG);
+    head->type = AROS_LONG2BE(IFFFORM_NEPCFG);      /* psdReadCfg() takes only the root's own type */
+    psdReadCfg(NULL, buf);
+    migrated |= pMigrateCfg(ps);
+    psdParseCfg();      /* records the live config as saved */
+    /* a migrated config matches no file until it is saved */
+    if(migrated) {
+        ps->ps_SavedConfigHash = ~ps->ps_ConfigHash;
+    }
+    return(migrated);
 }
 /* \\\ */
 
@@ -8311,21 +8652,30 @@ BOOL (psdLoadCfgFromDisk)(STRPTR filename asm("a1"), struct PsdBase * ps asm("a6
 
     if(!filename) {
         /* Neptune's own prefs first; without them, a one-time import of
-           Poseidon's, saved straight away as neptune.prefs so it is not
-           repeated. A missing file is only reported if all are missing.
+           Poseidon's (6.0-6.2). Either is saved straight away as neptune.prefs
+           when it was converted (an import always), so the conversion happens
+           once. With a classic Poseidon's file (pReadCfgFile()) Neptune starts
+           with its defaults. A missing file is only reported if all are missing.
            Local array: a static pointer table would need a .data section. */
         STRPTR names[4] = { NEP_PREFS_ENV, NEP_PREFS_ENVARC, NEP_OLDPREFS_ENV, NEP_OLDPREFS_ENVARC };
 
         for(ULONG i = 0; i < 4; i++) {
             BOOL imported = (i >= 2);
-            UWORD level = pLoadCfgFile(ps, names[i]);
+            ULONG *buf;
+            UWORD level = pReadCfgFile(ps, names[i], &buf);
             if(level == RETURN_OK) {
-                if(imported && psdSaveCfgToDisk(NULL)) {
+                BOOL migrated = pApplyCfg(ps, buf);
+                psdFreeVec(buf);
+                if((imported || migrated) && psdSaveCfgToDisk(NULL)) {
                     psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
-                                   "Settings imported from '%s' and saved to '%s'.",
+                                   imported ? "Settings imported from '%s' and saved to '%s'."
+                                            : "Settings in '%s' converted to Neptune's format and saved to '%s'.",
                                    names[i], NEP_PREFS_ENVARC);
                 }
                 return(TRUE);
+            }
+            if(level == RETURN_FAIL) {
+                return(FALSE);
             }
             if(level == RETURN_ERROR) {
                 psdAddErrorMsg(RETURN_ERROR, (STRPTR) libname, "Failed to load config from '%s'!", names[i]);
@@ -8335,13 +8685,21 @@ BOOL (psdLoadCfgFromDisk)(STRPTR filename asm("a1"), struct PsdBase * ps asm("a6
         return(FALSE);
     }
 
-    UWORD level = pLoadCfgFile(ps, filename);
-    if(level != RETURN_OK) {
+    /* a file loaded by name stays as it is (a converted one is only marked
+       unsaved) */
+    ULONG *buf;
+    UWORD level = pReadCfgFile(ps, filename, &buf);
+    if(level == RETURN_OK) {
+        pApplyCfg(ps, buf);
+        psdFreeVec(buf);
+        return(TRUE);
+    }
+    if(level != RETURN_FAIL) {
         psdAddErrorMsg(level, (STRPTR) libname,
                        "Failed to %s '%s'!", (level == RETURN_ERROR) ? "load config from" : "find config file",
                        filename);
     }
-    return((BOOL) (level == RETURN_OK));
+    return(FALSE);
 }
 /* \\\ */
 
@@ -8488,7 +8846,9 @@ struct PsdIFFContext * (psdAllocCfgForm)(ULONG formid asm("d0"), struct PsdBase 
 /* \\\ */
 
 /* /// "psdRemCfgForm()" */
-void (psdRemCfgForm)(struct PsdIFFContext * pic asm("a0"), struct PsdBase * ps asm("a6"))
+/* The sfd declares BOOL: always TRUE, so a caller testing D0 reads a defined
+   value */
+BOOL (psdRemCfgForm)(struct PsdIFFContext * pic asm("a0"), struct PsdBase * ps asm("a6"))
 {
     KPRINTF(10, ("psdRemCfgForm(0x%08lx)\n", pic));
 
@@ -8497,12 +8857,13 @@ void (psdRemCfgForm)(struct PsdIFFContext * pic asm("a0"), struct PsdBase * ps a
         pic = (struct PsdIFFContext *) ps->ps_ConfigRoot.lh_Head;
         if(!(pic->pic_Node.ln_Succ)) {
             pUnlockSem(ps, &ps->ps_ConfigLock);
-            return;
+            return TRUE;
         }
     }
     pFreeForm(ps, pic);
     pUnlockSem(ps, &ps->ps_ConfigLock);
     ps->ps_CheckConfigReq = TRUE;
+    return TRUE;
 }
 /* \\\ */
 
@@ -8607,6 +8968,10 @@ void (psdParseCfg)(struct PsdBase * ps asm("a6"))
     BOOL nodos = (FindTask(NULL)->tc_Node.ln_Type != NT_PROCESS);
 
     XPRINTF(10, ("psdParseCfg()\n"));
+
+    if(pPoseidonLoaded(ps, NULL)) {
+        return;
+    }
 
     pLockSemShared(ps, &ps->ps_ConfigLock);
     pCheckCfgChanged(ps);
@@ -8780,7 +9145,7 @@ void (psdParseCfg)(struct PsdBase * ps asm("a6"))
     if(nodos && ps->ps_GlobalCfg->pgc_BootDelay) {
         // wait for hubs to settle
         psdDelayMS(1000);
-        puc = (struct PsdUsbClass *) FindName(&ps->ps_Classes, "massstorage.class");
+        puc = (struct PsdUsbClass *) FindName(&ps->ps_Classes, "massstorage.usbclass");
         if(puc && puc->puc_UseCnt) {
             psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
                            "Delaying further execution by %ld second(s) (boot delay).",
@@ -8861,16 +9226,22 @@ BOOL (psdSetClsCfg)(STRPTR owner asm("a0"), APTR form asm("a1"), struct PsdBase 
 struct PsdIFFContext * (psdGetClsCfg)(STRPTR owner asm("a0"), struct PsdBase * ps asm("a6"))
 {
     struct PsdIFFContext *pic;
+    struct PsdIFFContext *res = NULL;
 
     KPRINTF(10, ("psdGetClsCfg(%s)\n", owner));
+    /* shared, as psdGetUsbDevCfg(): a config load must not swap forms
+       under the walk */
+    pLockSemShared(ps, &ps->ps_ConfigLock);
     pic = psdFindCfgForm(NULL, IFFFORM_CLASSCFG);
     while(pic) {
         if(pMatchStringChunk(ps, pic, IFFCHNK_OWNER, owner)) {
-            return(psdFindCfgForm(pic, IFFFORM_CLASSDATA));
+            res = psdFindCfgForm(pic, IFFFORM_CLASSDATA);
+            break;
         }
         pic = psdNextCfgForm(pic);
     }
-    return(NULL);
+    pUnlockSem(ps, &ps->ps_ConfigLock);
+    return res;
 }
 /* \\\ */
 
@@ -9156,49 +9527,16 @@ BOOL (psdSetForcedBinding)(STRPTR owner asm("a2"), STRPTR devid asm("a0"), STRPT
 /* \\\ */
 
 /* /// "psdGetForcedBinding()" */
+/* The returned name points into the live config: valid only until the
+   config next changes. */
 STRPTR (psdGetForcedBinding)(STRPTR devid asm("a0"), STRPTR ifid asm("a1"), struct PsdBase * ps asm("a6"))
 {
-    struct PsdIFFContext *pic;
-    struct PsdIFFContext *mpic = NULL;
-    ULONG *chunk;
-    STRPTR owner = NULL;
+    STRPTR owner;
 
     pLockSemShared(ps, &ps->ps_ConfigLock);
-    /* Find device config form. It contains all device config data */
-    pic = psdFindCfgForm(NULL, IFFFORM_DEVICECFG);
-    while(pic) {
-        /* Find DEVID-Chunk. Check if it matches our device id */
-        if(pMatchStringChunk(ps, pic, IFFCHNK_DEVID, devid)) {
-            /* We found the correct device. Now if we need to store interface data, find the interface first */
-            if(ifid) {
-                /* Search interface config form */
-                mpic = psdFindCfgForm(pic, IFFFORM_IFCFGDATA);
-                while(mpic) {
-                    /* Found the form. Find the the ID String for the interface */
-                    if(pMatchStringChunk(ps, mpic, IFFCHNK_IFID, ifid)) {
-                        /* ID did match, now check for forced binding */
-                        chunk = pFindCfgChunk(ps, mpic, IFFCHNK_FORCEDBIND);
-                        if(chunk) {
-                            owner = (STRPTR) &chunk[2];
-                            break;
-                        }
-                    }
-                    mpic = psdNextCfgForm(mpic);
-                }
-            } else {
-                /* Search for device forced binding */
-                chunk = pFindCfgChunk(ps, pic, IFFCHNK_FORCEDBIND);
-                if(chunk) {
-                    owner = (STRPTR) &chunk[2];
-                    break;
-                }
-            }
-            break;
-        }
-        pic = psdNextCfgForm(pic);
-    }
+    owner = pFindForcedBinding(ps, devid, ifid);
     pUnlockSem(ps, &ps->ps_ConfigLock);
-    return(owner);
+    return owner;
 }
 /* \\\ */
 
@@ -10800,6 +11138,105 @@ static void pIdleSuspendSweep(struct PsdBase *ps)
 }
 /* \\\ */
 
+/* /// "pIsDeviceStillValid()" */
+/* Is pd still one of the stack's devices? For a pointer kept across a wait
+   (an event note, a popup). */
+BOOL pIsDeviceStillValid(struct PsdBase *ps, struct PsdDevice *pd)
+{
+    struct PsdDevice *tmppd = NULL;
+
+    while((tmppd = psdGetNextDevice(tmppd))) {
+        if(tmppd == pd) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+/* \\\ */
+
+/* /// "pIsClassStillValid()" */
+/* Is ucb still the base of a loaded class? */
+BOOL pIsClassStillValid(struct PsdBase *ps, struct Library *ucb)
+{
+    struct PsdUsbClass *puc = (struct PsdUsbClass *) ps->ps_Classes.lh_Head;
+
+    while(puc->puc_Node.ln_Succ) {
+        if(puc->puc_ClassBase == ucb) {
+            return TRUE;
+        }
+        puc = (struct PsdUsbClass *) puc->puc_Node.ln_Succ;
+    }
+    return FALSE;
+}
+/* \\\ */
+
+/* /// "pAutoRecoverAction()" */
+/* What the stack settings ask for a dead or overdrawn device: EHRA_POWERCYCLE,
+   EHRA_DISABLE or EHRA_NONE. EHRA_NONE also without a bound parent hub to do
+   it - a root hub has no port. */
+static ULONG pAutoRecoverAction(struct PsdBase *ps, struct PsdDevice *pd)
+{
+    struct PsdGlobalCfg *pgc = ps->ps_GlobalCfg;
+    BOOL isdead = (pd->pd_Flags & PDFF_DEAD) ? TRUE : FALSE;
+    BOOL lowpower = (pd->pd_Flags & PDFF_LOWPOWER) ? TRUE : FALSE;
+
+    if(!(pd->pd_Hub && pd->pd_Hub->pd_DevBinding)) {
+        return EHRA_NONE;
+    }
+    if(isdead && pgc->pgc_AutoRestartDead) {
+        return EHRA_POWERCYCLE;
+    }
+    if((isdead && pgc->pgc_AutoDisableDead) || (lowpower && pgc->pgc_AutoDisableLP)) {
+        return EHRA_DISABLE;
+    }
+    return EHRA_NONE;
+}
+/* \\\ */
+
+/* /// "pAutoRecover()" */
+/* Handle a device an EHMB_DEVICEDEAD or EHMB_DEVICELOWPW note names: apply
+   pAutoRecoverAction() and report the outcome, EHRA_NONE included, as one
+   EHMB_DEVRECOVERY note carrying everything a listener shows - the device
+   may be gone by the time it is read. Runs in the event task, so recovery
+   works whether or not the notifier does. Under the PBase read lock: the
+   device cannot be unlinked meanwhile (psdFreeDevice needs the write lock),
+   so it stays valid here, and the note is queued before the hub task can
+   free it. */
+static void pAutoRecover(struct PsdBase *ps, struct PsdDevice *pd)
+{
+    psdLockReadPBase();
+    if(pIsDeviceStillValid(ps, pd) && (pd->pd_Flags & (PDFF_DEAD|PDFF_LOWPOWER))) {
+        STRPTR name = pd->pd_ProductStr ? pd->pd_ProductStr : (STRPTR) "";
+        ULONG len = sizeof(struct PsdDevRecovery) + strlen(name);
+        struct PsdDevRecovery *pdr = psdAllocVec(len);
+        ULONG action = pAutoRecoverAction(ps, pd);
+        struct PsdUsbClass *puc = action ? pd->pd_Hub->pd_ClsBinding : NULL;
+
+        if(action && !(puc && pIsClassStillValid(ps, puc->puc_ClassBase) &&
+                       usbDoMethod((action == EHRA_POWERCYCLE) ? UCM_HubPowerCyclePort : UCM_HubDisablePort,
+                                   pd->pd_Hub, pd->pd_HubPort))) {
+            action = EHRA_NONE; /* the hub class did not take it */
+        }
+        if(action) {
+            psdAddErrorMsg(RETURN_WARN, (STRPTR) libname,
+                           (action == EHRA_POWERCYCLE)
+                           ? "Automatically powercycling port for '%s' due to death event."
+                           : "Automatically disabling port for '%s' due lowpower/death event.",
+                           pd->pd_ProductStr);
+        }
+        if(pdr) {
+            pdr->pdr_Action = action;
+            pdr->pdr_Flags = ((pd->pd_Flags & PDFF_DEAD) ? PDRF_DEAD : 0) |
+                             ((pd->pd_Flags & PDFF_LOWPOWER) ? PDRF_LOWPOWER : 0);
+            strcpy((STRPTR) pdr->pdr_ProductName, name);
+            pSendEventWithData(ps, EHMB_DEVRECOVERY, pd, NULL, pdr, len);
+            psdFreeVec(pdr);
+        }
+    }
+    psdUnlockPBase();
+}
+/* \\\ */
+
 /* /// "pEventHandlerTask()" */
 void pEventHandlerTask()
 {
@@ -10826,7 +11263,7 @@ void pEventHandlerTask()
                     ph->ph_TimerIOReq->tr_node.io_Message.mn_Node.ln_Name = "EventHandler";
                     ph->ph_TimerIOReq->tr_node.io_Command = TR_ADDREQUEST;
 
-                    ph->ph_EventHandler = psdAddEventHandler(ph->ph_MsgPort, EHMF_CONFIGCHG);
+                    ph->ph_EventHandler = psdAddEventHandler(ph->ph_MsgPort, EHMF_CONFIGCHG|EHMF_DEVICEDEAD|EHMF_DEVICELOWPW);
                     if(ph->ph_EventHandler) {
                         ph->ph_Task = thistask;
                         Forbid();
@@ -10839,7 +11276,7 @@ void pEventHandlerTask()
                         SendIO(&ph->ph_TimerIOReq->tr_node);
                         sigmask = (1UL<<ph->ph_MsgPort->mp_SigBit)|(1UL<<ph->ph_TimerMsgPort->mp_SigBit)|SIGBREAKF_CTRL_C;
                         counter = 0;
-                        cfgchanged = 0;
+                        cfgchanged = 0;     /* tick of the first pending change + 1; 0 = none */
                         do {
                             if(ps->ps_CheckConfigReq) {
                                 pCheckCfgChanged(ps);
@@ -10858,10 +11295,14 @@ void pEventHandlerTask()
                                 switch(pen->pen_Event) {
                                 case EHMB_CONFIGCHG:
                                     if(!cfgchanged) {
-                                        cfgchanged = counter;
+                                        cfgchanged = counter + 1;
                                     }
                                     break;
 
+                                case EHMB_DEVICEDEAD:
+                                case EHMB_DEVICELOWPW:
+                                    pAutoRecover(ps, (struct PsdDevice *) pen->pen_Param1);
+                                    break;
                                 }
                                 ReplyMsg(&pen->pen_Msg);
                             }
@@ -10892,7 +11333,8 @@ void pEventHandlerTask()
                                         psdAddErrorMsg0(RETURN_OK, (STRPTR) libname, "Notifier started.");
                                     }
                                 }
-                                if((cfgchanged + 2) == counter) {
+                                /* two ticks after the first change */
+                                if(cfgchanged && ((cfgchanged + 1) == counter)) {
                                     KPRINTF(10, ("Sending information about config changed to all classes.\n"));
                                     /* Inform all classes */
                                     psdLockReadPBase();

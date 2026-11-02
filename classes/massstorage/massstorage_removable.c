@@ -20,7 +20,7 @@ extern const STRPTR libname;
  * ncm_MediaUnsettled / UCM_MediaPending. Pre-DOS it runs as a plain Task and
  * watches for dos.library; when DOS appears it retires itself and is
  * reincarnated as a Process, which is what makes DoPkt()-based mounting legal
- * (see nOpenDOS).
+ * (see nOpenDOS). The Process runs until the class is expunged.
  *
  * The file reads bottom-up: every static is defined before its callers.
  * In order:
@@ -513,15 +513,13 @@ static void nRTMountPass(struct NepMSBase *nh, struct NepClassMS *ncm)
  */
 
 /* /// "nRTHandleUnit()" */
-/* One unit's share of a tick. TRUE = the unit is alive (its task runs and the
-   device is still there), which is what keeps the removable task itself
-   alive. */
-static BOOL nRTHandleUnit(struct NepMSBase *nh, struct NepClassMS *ncm)
+/* One unit's share of a tick. */
+static void nRTHandleUnit(struct NepMSBase *nh, struct NepClassMS *ncm)
 {
     if((!ncm->ncm_Task) || ncm->ncm_DenyRequests)
     {
         nRTAutoUnmount(ncm);
-        return FALSE;
+        return;
     }
     if(ncm->ncm_Removable && ncm->ncm_Running)
     {
@@ -531,7 +529,6 @@ static BOOL nRTHandleUnit(struct NepMSBase *nh, struct NepClassMS *ncm)
        is how fixed disks get mounted: their ChangeCount edge comes from the
        unit task at bind time, not from a TUR here. */
     nRTMountPass(nh, ncm);
-    return TRUE;
 }
 /* \\\ */
 
@@ -567,24 +564,18 @@ static void nRTArmTimer(struct NepMSBase *nh)
 
 /* /// "nRTHandleTick()" */
 /* One timer tick: every unit's poll, then the re-arm - exactly one SendIO per
-   received timer message, the single in-flight timerequest is the invariant.
-   TRUE = some unit is still alive. */
-static BOOL nRTHandleTick(struct NepMSBase *nh)
+   received timer message, the single in-flight timerequest is the invariant. */
+static void nRTHandleTick(struct NepMSBase *nh)
 {
     KPRINTF(2, ("Timer interrupt\n"));
 
-    BOOL anyAlive = FALSE;
     struct NepClassMS *ncm;
 
     MS_FOREACH_UNIT(nh, ncm)
     {
-        if(nRTHandleUnit(nh, ncm))
-        {
-            anyAlive = TRUE;
-        }
+        nRTHandleUnit(nh, ncm);
     }
     nRTArmTimer(nh);
-    return anyAlive;
 }
 /* \\\ */
 
@@ -661,26 +652,19 @@ void nRemovableTask(void)
     ULONG sigmask = (1L<<nh->nh_TimerMsgPort->mp_SigBit)|
                     SIGBREAKF_CTRL_C;
     ULONG sigs = 0;
-    BOOL keepRunning = TRUE;
 
+    /* No leaving when the last unit has gone: a unit bound meanwhile would
+       find this task still there (nStartRemovableTask) and never be mounted,
+       and a fixed disk asks only once. Only DOS arrival (a successor) and
+       CTRL-C (class expunge) end it. */
     do
     {
         while(GetMsg(nh->nh_TimerMsgPort))
         {
-            keepRunning = nRTHandleTick(nh);
+            nRTHandleTick(nh);
         }
 
-        if(nRTIsPreDOS(nh))
-        {
-            if(nRTDOSArrived(nh))
-            {
-                break;
-            }
-            // don't quit task, otherwise nobody will be there to restart it and retry mounting stuff
-            keepRunning = TRUE;
-        }
-
-        if(!keepRunning)
+        if(nRTIsPreDOS(nh) && nRTDOSArrived(nh))
         {
             break;
         }

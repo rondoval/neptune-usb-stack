@@ -31,8 +31,8 @@ Impossible d'éjecter '%s' :\n%s est toujours en cours d'utilisation.\nFermez tou
 ; Cannot eject '%s':\n%s is still in use.\nClose all files on it and try again.
 ;
 MSG_REQ_TOOOLD
-Impossible d'éjecter '%s' :\nla massstorage.class installée est trop ancienne\npour l'éjection sécurisée - veuillez la mettre à jour.
-; Cannot eject '%s':\nthe installed massstorage.class is too old\nfor safe eject - please update it.
+Impossible d'éjecter '%s' :\nla massstorage.usbclass installée est trop ancienne\npour l'éjection sécurisée - veuillez la mettre à jour.
+; Cannot eject '%s':\nthe installed massstorage.usbclass is too old\nfor safe eject - please update it.
 ;
 MSG_REQ_FAILED
 L'éjection de '%s' a échoué.\nConsultez le journal d'erreurs de Neptune (Neptune USB).

@@ -24,7 +24,7 @@
 #                 commands, NeptuneUSB, USBEject and the VHI driver (to LIBS:VHI/)
 #     (none of --build/--package/--upload => --build --upload)
 #     --tools     also upload the optional per-gadget tools to SYS:Tools/, and the test
-#                 tools that no archive has (UVCTest)
+#                 tools that no archive has (USBVideoTest)
 #     --all-cpus  build/package every released CPU (68020, 68040, 68060) in turn, each
 #                 in its own build dir; cannot be combined with --upload
 #     --dry-run   upload: show what would be copied; copy nothing
@@ -83,7 +83,7 @@ BUILD_STAMP="$(build_stamp)"
 # The FPU pairing is not a free choice: 68020 machines usually have no FPU and the
 # soft-float 020 runtime is the one that matches (libm020 without libm881), while 68040
 # and 68060 pair with the hard-float one. Nothing in the stack computes in floating point
-# anyway - only the optional PencamTool/SonixcamTool gamma table does.
+# anyway - only the optional USBPencam/USBSonixcam gamma table does.
 RELEASE_CPUS=(68020 68040 68060)
 DEFAULT_CPU=68040
 CPU="${CPU:-$DEFAULT_CPU}"
@@ -146,27 +146,27 @@ cpu_setup "$CPU"
 CORE=(
     "neptune.library/neptune.library|LIBS:neptune.library"
     "c/USBStart|C:USBStart"
-    "c/AddUSBHardware|C:AddUSBHardware"
-    "c/AddUSBClasses|C:AddUSBClasses"
+    "c/USBAddHardware|C:USBAddHardware"
+    "c/USBAddClasses|C:USBAddClasses"
     "c/USBList|C:USBList"
     "c/USBErrorlog|C:USBErrorlog"
     "neptuneusb/NeptuneUSB|SYS:Prefs/NeptuneUSB"
     "usbeject/USBEject|SYS:WBStartup/USBEject"
-    "vhi/usbvideo.vhi|LIBS:VHI/usbvideo.vhi"
+    "vhi/neptune.vhi|LIBS:VHI/neptune.vhi"
 )
 # Optional per-gadget tools
 GADGET_TOOLS=(
-    "tools/DRadioTool|SYS:Tools/DRadioTool"
-    "tools/PencamTool|SYS:Tools/PencamTool"
-    "tools/PowManTool|SYS:Tools/PowManTool"
-    "tools/RocketTool|SYS:Tools/RocketTool"
-    "tools/SonixcamTool|SYS:Tools/SonixcamTool"
-    "tools/UPSTool|SYS:Tools/UPSTool"
-    "tools/UVCTool|SYS:Tools/UVCTool"
+    "tools/USBRadio|SYS:Tools/USBRadio"
+    "tools/USBPencam|SYS:Tools/USBPencam"
+    "tools/USBPowMan|SYS:Tools/USBPowMan"
+    "tools/USBRocket|SYS:Tools/USBRocket"
+    "tools/USBSonixcam|SYS:Tools/USBSonixcam"
+    "tools/USBUPS|SYS:Tools/USBUPS"
+    "tools/USBVideo|SYS:Tools/USBVideo"
 )
 # Test tools: built and uploaded with the gadget tools, in no archive
 TEST_TOOLS=(
-    "tools/UVCTest|SYS:Tools/UVCTest"
+    "tools/USBVideoTest|SYS:Tools/USBVideoTest"
 )
 
 # --- helpers -----------------------------------------------------------------
@@ -199,14 +199,14 @@ copy_one() {                               # copy_one <src-under-build> <amiga-d
 
 deploy_group() { local e; for e in "$@"; do copy_one "${e%%|*}" "${e#*|}"; done; }
 
-# Every built class under build/classes/*/*.class -> DEVS:USBClasses/<file> (output names
-# differ from dir names - pegasus.class, dm9601eth.class, usbaudio.class, ... - so glob the
+# Every built class under build/classes/*/*.usbclass -> DEVS:USBClasses/<file> (output names
+# differ from dir names - pegasus.usbclass, dm9601eth.usbclass, usbaudio.usbclass, ... - so glob the
 # actual artifacts rather than the source-dir names).
 deploy_classes() {
     local f rel; local -a list
-    mapfile -t list < <(find "$BUILD_DIR/classes" -name '*.class' -type f 2>/dev/null | sort)
+    mapfile -t list < <(find "$BUILD_DIR/classes" -name '*.usbclass' -type f 2>/dev/null | sort)
     if (( ${#list[@]} == 0 )); then
-        printf '  \e[31mMISS\e[0m %-42s (no classes built - run --build?)\n' "classes/*/*.class" >&2
+        printf '  \e[31mMISS\e[0m %-42s (no classes built - run --build?)\n' "classes/*/*.usbclass" >&2
         fail=$((fail + 1)); return
     fi
     for f in "${list[@]}"; do
@@ -306,8 +306,8 @@ if (( DO_UPLOAD )); then
         echo "dry run - nothing copied."
     else
         echo "done: $ok copied, $fail failed."
-        echo "Note: neptune.library / *.class are loaded into memory at boot - reboot"
-        echo "      (or unload the stack and re-run USBStart / AddUSBClasses) to pick up changes."
+        echo "Note: neptune.library / *.usbclass are loaded into memory at boot - reboot"
+        echo "      (or unload the stack and re-run USBStart / USBAddClasses) to pick up changes."
     fi
 fi
 (( fail == 0 ))

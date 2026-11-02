@@ -1139,6 +1139,6 @@ Nie mo¿na wysun±æ '%s':\n%s jest wci±¿ w u¿yciu.\nZamknij wszystkie pliki na nim
 ; Cannot eject '%s':\n%s is still in use.\nClose all files on it and try again.
 ;
 MSG_ACTION_DEV_EJECT_FAILED_TXT
-Wysuwanie '%s' nie powiod³o siê.\nSprawd¼ dziennik b³êdów; mo¿e byæ wymagana\naktualizacja massstorage.class.
-; Ejecting '%s' failed.\nSee the error log; an updated\nmassstorage.class may be required.
+Wysuwanie '%s' nie powiod³o siê.\nSprawd¼ dziennik b³êdów; mo¿e byæ wymagana\naktualizacja massstorage.usbclass.
+; Ejecting '%s' failed.\nSee the error log; an updated\nmassstorage.usbclass may be required.
 ;

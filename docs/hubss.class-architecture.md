@@ -1,7 +1,7 @@
-# hubss.class - Architecture
+# hubss.usbclass - Architecture
 
-> **Scope:** `hubss.class`, the USB 3.x SuperSpeed hub driver. It is the SuperSpeed sibling of
-> [`hub.class`](hub.class-architecture.md) and shares its structure; this document describes what
+> **Scope:** `hubss.usbclass`, the USB 3.x SuperSpeed hub driver. It is the SuperSpeed sibling of
+> [`hub.usbclass`](hub.class-architecture.md) and shares its structure; this document describes what
 > is shared only by reference and concentrates on what differs. Read the hub document first.
 >
 > Function names are anchors; the code is the reference for field layouts, timings and retry
@@ -11,7 +11,7 @@
 
 ## 1. Purpose
 
-`hubss.class` drives **SuperSpeed hubs**, and the SuperSpeed half of every USB 3 hub. Its jobs are
+`hubss.usbclass` drives **SuperSpeed hubs**, and the SuperSpeed half of every USB 3 hub. Its jobs are
 the hub jobs (build the tree, track it live, serialise per-device changes; hub doc §1), plus the
 client-side SuperSpeed hub services a USB 3 hub needs from the host software:
 
@@ -22,7 +22,7 @@ client-side SuperSpeed hub services a USB 3 hub needs from the host software:
 - publish the hub's latency figures for link power management.
 
 **Context HCDs only.** SuperSpeed devices exist as such only on a context HCD; on a legacy HCD the
-controller presents USB 3 hubs as USB 2.0 hubs, and `hub.class` binds them. `hubss.class` checks
+controller presents USB 3 hubs as USB 2.0 hubs, and `hub.usbclass` binds them. `hubss.usbclass` checks
 the HCD when it binds and declines on anything else. There is no legacy fallback anywhere in the
 class.
 
@@ -33,22 +33,22 @@ class.
 ```mermaid
 flowchart TB
     CORE["neptune.library"]
-    CORE -->|"offered first (scan priority 1):<br/>hub class code and SuperSpeed"| HUBSS["hubss.class - one task per SS hub"]
-    CORE -->|"offered next (priority 0): any hub"| HUB["hub.class"]
+    CORE -->|"offered first (scan priority 1):<br/>hub class code and SuperSpeed"| HUBSS["hubss.usbclass - one task per SS hub"]
+    CORE -->|"offered next (priority 0): any hub"| HUB["hub.usbclass"]
     HUBSS -->|"enumerate, scan, pipes, hub facts for UPDATE_HUB"| CORE
     HUBSS <-.->|"USB 3 pairing: the SS half evicts the USB 2.0 twin"| HUB
 ```
 
 The split is decided by this class: it accepts only SuperSpeed hubs and is offered every hub
-first. `hub.class` takes whatever is left, which is why `hub.class` must never gain a speed check
+first. `hub.usbclass` takes whatever is left, which is why `hub.usbclass` must never gain a speed check
 (hub doc §6, rule 8).
 
-`hubss.class` uses the same library services as `hub.class`. It takes part in **no** address-0
+`hubss.usbclass` uses the same library services as `hub.usbclass`. It takes part in **no** address-0
 serialisation: on a context HCD the controller assigns addresses atomically.
 
 ---
 
-## 3. What is shared with hub.class
+## 3. What is shared with hub.usbclass
 
 The following work as described in the hub document and are not repeated here:
 
@@ -63,15 +63,15 @@ The following work as described in the hub document and are not repeated here:
 | Teardown through `nFreeHub` | §5.7 |
 | Design rules 1, 2, 4, 5, 6, 7 | §6 |
 
-The two classes are **separate sources on purpose**. `hubss.class` began as a copy of `hub.class`
-but has dropped the whole USB 2.0 path, while `hub.class` keeps it. A change to a shared
+The two classes are **separate sources on purpose**. `hubss.usbclass` began as a copy of `hub.usbclass`
+but has dropped the whole USB 2.0 path, while `hub.usbclass` keeps it. A change to a shared
 mechanism has to be made in both files; that cost is accepted so that each class stays simple.
 
 ---
 
 ## 4. What differs
 
-| Aspect | `hub.class` | `hubss.class` |
+| Aspect | `hub.usbclass` | `hubss.usbclass` |
 |---|---|---|
 | Binds | any hub (catch-all) | SuperSpeed hubs on a context HCD |
 | Hub descriptor | USB 2.0 hub descriptor; prefers the multi-TT interface | SuperSpeed hub descriptor; adds the header-decode latency and hub delay |
@@ -149,15 +149,15 @@ The shared rules are listed in hub doc §6. In addition:
    costing about half a second and a burst of misleading errors per port (hub doc §6, rule 5).
 3. **Context HCDs only.** The class assumes atomic addressing, native USB 3 port status and a
    controller that understands `UPDATE_HUB`. Adding a legacy path would bring back everything
-   `hub.class` already does for that case.
+   `hub.usbclass` already does for that case.
 4. **The pairing helpers for the USB 2.0 half are present but inert here** - this class is always
-   the SuperSpeed half. They stay for parity with `hub.class`.
+   the SuperSpeed half. They stay for parity with `hub.usbclass`.
 
 ---
 
 ## 7. Interfaces
 
-**Implemented:** the same `usbclass` methods as `hub.class` (hub doc §7), including
+**Implemented:** the same `usbclass` methods as `hub.usbclass` (hub doc §7), including
 `UCM_HubResetPort` and `UCM_PortsPending`; scan priority 1.
 
 **USB requests:** the SuperSpeed hub descriptor, hub and port status, `SET_HUB_DEPTH`, set/clear

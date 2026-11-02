@@ -1,9 +1,9 @@
-# DataType description for Neptune settings files (IFF FORM PSDC)
+# DataType description for Neptune settings files (IFF FORM NEPC)
 Name=Neptune
 Version=$VER: Neptune 1.0 (19.10.2026)
 BaseName=neptune
 Pattern=#?
-Mask='F' 'O' 'R' 'M' ANY ANY ANY ANY 'P' 'S' 'D' 'C'
+Mask='F' 'O' 'R' 'M' ANY ANY ANY ANY 'N' 'E' 'P' 'C'
 GroupID=bina
 Flags=DTF_IFF
 Priority=0

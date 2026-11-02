@@ -1,6 +1,6 @@
 /*
  *----------------------------------------------------------------------------
- *                         Pencam Tool for Neptune
+ *                         USBPencam - Pencam tool for Neptune
  *----------------------------------------------------------------------------
  * Based on the Poseidon Pencam Tool by Chris Hodges <chrisly@platon42.de>.
  */
@@ -14,7 +14,7 @@
 #include <proto/graphics.h>
 #include <proto/diskfont.h>
 
-#include "PencamTool.h"
+#include "USBPencam.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,9 +33,9 @@
 #define ARGS_UNIT     10
 #define ARGS_SIZEOF   11
 
-const char PencamTool_prgname[] = "PencamTool";
+const char USBPencam_prgname[] = "USBPencam";
 static const char *template = "TO/A,PICNUM/N,INTERVAL/N,UPTO/N/K,NOBEEP/S,GAMMA/K,SHARPEN/S,TEXT/K,FONT/K,FONTSIZE/N/K,UNIT/N/K";
-const char PencamTool_version[] = NEP_VER("PencamTool");
+const char USBPencam_version[] = NEP_VER("USBPencam");
 static IPTR ArgsArray[ARGS_SIZEOF];
 static struct RDArgs *ArgsHook = NULL;
 

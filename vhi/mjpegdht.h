@@ -47,7 +47,7 @@ static const UBYTE MJPEGStdDHT[MJPEG_STD_DHT_SIZE] =
 /* Where the standard tables have to go: the offset of the frame's first scan
    if no Huffman table comes before it; 0 if the frame brings its own, or is
    not a JPEG picture this understands. */
-static ULONG mjpegMissingDHT(const UBYTE *jpeg, ULONG len)
+static inline ULONG mjpegMissingDHT(const UBYTE *jpeg, ULONG len)
 {
     ULONG pos = 2;
 
@@ -73,7 +73,7 @@ static ULONG mjpegMissingDHT(const UBYTE *jpeg, ULONG len)
 /* Is there a picture in the file? The offset of its frame header (SOF), 0
    if there is none before the first scan - some cameras send a JPEG file
    with nothing in it, SOI and EOI, when the source gave them no picture. */
-static ULONG mjpegFrameHeader(const UBYTE *jpeg, ULONG len)
+static inline ULONG mjpegFrameHeader(const UBYTE *jpeg, ULONG len)
 {
     ULONG pos = 2;
 

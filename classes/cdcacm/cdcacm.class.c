@@ -44,6 +44,11 @@ int libInit(struct NepSerialBase * nh)
 {
     struct NepSerialBase *ret = NULL;
 
+    if(nDevNameTaken(DEVNAME))
+    {
+        return FALSE;
+    }
+
     KPRINTF(10, ("libInit nh: 0x%08lx SysBase: 0x%08lx\n", nh, EXEC_BASE_NAME));
 
     nh->nh_UtilityBase = OpenLibrary("utility.library", 39);
@@ -101,7 +106,7 @@ int libExpunge(struct NepSerialBase * nh)
         nh->nh_DevBase->np_Library.lib_OpenCnt--;
         RemDevice((struct Device *) nh->nh_DevBase);
 
-        KPRINTF(5, ("libExpunge: Unloading done! cdcacm.class expunged!\n\n"));
+        KPRINTF(5, ("libExpunge: Unloading done! cdcacm.usbclass expunged!\n\n"));
     } else {
         KPRINTF(5, ("libExpunge: Could not expunge, LIBF_DELEXP set!\n"));
         return(FALSE);
@@ -206,7 +211,7 @@ struct NepClassSerial * usbAttemptInterfaceBinding(struct NepSerialBase *nh, str
                     DA_VendorID, &vendid,
                     TAG_END);
 
-//      bug("cdcacm.class:AttemptInterfaceBinding vendor id=%lx  product id=%lx\n",vendid,prodid);
+//      bug("cdcacm.usbclass:AttemptInterfaceBinding vendor id=%lx  product id=%lx\n",vendid,prodid);
 
         // ZTE ModeSwitch
         if( vendid == 0x19d2 && prodid == 0x2000 ){
@@ -227,7 +232,7 @@ struct NepClassSerial * usbAttemptInterfaceBinding(struct NepSerialBase *nh, str
 
             CloseLibrary(ps);
             if( ifclass == MASSSTORE_CLASSCODE ){
-                KPRINTF(10, ("cdcacm.class: fake massstorage binding\n"));
+                KPRINTF(10, ("cdcacm.usbclass: fake massstorage binding\n"));
                 return (struct NepClassSerial *)&fake_binding;
             }
             return(NULL);
@@ -253,7 +258,7 @@ struct NepClassSerial * usbAttemptInterfaceBinding(struct NepSerialBase *nh, str
                 }
                 CloseLibrary(ps);
                 if( ifclass == MASSSTORE_CLASSCODE ){
-                    KPRINTF(10, ("cdcacm.class: fake massstorage binding\n"));
+                    KPRINTF(10, ("cdcacm.usbclass: fake massstorage binding\n"));
                     return (struct NepClassSerial *)&fake_binding;
                 }
                 return(NULL);
@@ -277,7 +282,7 @@ struct NepClassSerial * usbAttemptInterfaceBinding(struct NepSerialBase *nh, str
 
             CloseLibrary(ps);
             if( ifclass == MASSSTORE_CLASSCODE ){
-                KPRINTF(10, ("cdcacm.class: fake massstorage binding\n"));
+                KPRINTF(10, ("cdcacm.usbclass: fake massstorage binding\n"));
                 return (struct NepClassSerial *)&fake_binding;
             }
             return(NULL);
@@ -302,7 +307,7 @@ struct NepClassSerial * usbAttemptInterfaceBinding(struct NepSerialBase *nh, str
             prodid == 0x0128
         )){
             if( ifclass == MASSSTORE_CLASSCODE ){
-                KPRINTF(10, ("cdcacm.class: fake massstorage binding\n"));
+                KPRINTF(10, ("cdcacm.usbclass: fake massstorage binding\n"));
                 return (struct NepClassSerial *)&fake_binding;
             }
 
@@ -324,7 +329,7 @@ struct NepClassSerial * usbAttemptInterfaceBinding(struct NepSerialBase *nh, str
             prodid == 0x14ac
         )){
             if( ifclass == MASSSTORE_CLASSCODE ){
-                KPRINTF(10, ("cdcacm.class: fake massstorage binding\n"));
+                KPRINTF(10, ("cdcacm.usbclass: fake massstorage binding\n"));
                 return (struct NepClassSerial *)&fake_binding;
             }
 
@@ -448,7 +453,7 @@ struct NepClassSerial * usbForceInterfaceBinding(struct NepSerialBase *nh, struc
         ncp->ncp_UnitVendorID = vendid;
         Permit();
 
-        psdSafeRawDoFmt(buf, 64, "cdcacm.class<%08lx>", ncp);
+        psdSafeRawDoFmt(buf, 64, CLASS_NAME "<%08lx>", ncp);
         ncp->ncp_ReadySignal = SIGB_SINGLE;
         ncp->ncp_ReadySigTask = FindTask(NULL);
         SetSignal(0, SIGF_SINGLE);
@@ -501,7 +506,7 @@ void usbReleaseInterfaceBinding(struct NepSerialBase *nh, struct NepClassSerial 
     KPRINTF(1, ("nepSerialReleaseInterfaceBinding(%08lx)\n", ncp));
 
     if( ncp == &fake_binding ){
-        KPRINTF(10, ("cdcacm.class: fake massstorage binding released\n"));
+        KPRINTF(10, ("cdcacm.usbclass: fake massstorage binding released\n"));
         return;
     }
 

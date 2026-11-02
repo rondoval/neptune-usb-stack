@@ -174,7 +174,7 @@ struct AROSXClassController * usbAttemptInterfaceBinding(struct AROSXClassBase *
             arosxc->Device = pd;
             arosxc->Interface = pif;
 
-            psdSafeRawDoFmt(buf, 64, "arosx.class.gamepad.%01lx", arosxc->id);
+            psdSafeRawDoFmt(buf, 64, CLASS_NAME ".gamepad.%01lx", arosxc->id);
             arosxc->ReadySignal = SIGB_SINGLE;
             arosxc->ReadySigTask = FindTask(NULL);
             SetSignal(0, SIGF_SINGLE);

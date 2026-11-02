@@ -1140,6 +1140,6 @@ Impossible d'éjecter '%s' :\n%s est toujours en cours d'utilisation.\nFermez tou
 ; Cannot eject '%s':\n%s is still in use.\nClose all files on it and try again.
 ;
 MSG_ACTION_DEV_EJECT_FAILED_TXT
-L'éjection de '%s' a échoué.\nConsultez le journal d'erreurs ; une mise à jour\nde massstorage.class peut être nécessaire.
-; Ejecting '%s' failed.\nSee the error log; an updated\nmassstorage.class may be required.
+L'éjection de '%s' a échoué.\nConsultez le journal d'erreurs ; une mise à jour\nde massstorage.usbclass peut être nécessaire.
+; Ejecting '%s' failed.\nSee the error log; an updated\nmassstorage.usbclass may be required.
 ;

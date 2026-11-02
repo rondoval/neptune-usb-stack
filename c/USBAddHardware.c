@@ -1,5 +1,7 @@
 /*
-** AddUSBHardware by Chris Hodges <chrisly@platon42.de>
+** USBAddHardware: attach or remove a host-controller device by hand.
+**
+** Based on Poseidon's AddUSBHardware by Chris Hodges <chrisly@platon42.de>.
 */
 
 #include <stdio.h>
@@ -16,6 +18,7 @@
 #include <proto/dos.h>
 #include <neptune_version.h>
 #include <hwmatch.h>
+#include <nep_otherstack.h>
 
 #define ARGS_DEVICE   0
 #define ARGS_UNIT     1
@@ -25,7 +28,7 @@
 #define ARGS_SIZEOF   5
 
 static const char *template = "DEVICE,UNIT/N,QUIET/S,REMOVE/S,ALL/S";
-const char *version = NEP_VER("AddUSBHardware");
+const char *version = NEP_VER("USBAddHardware");
 static IPTR ArgsArray[ARGS_SIZEOF];
 static struct RDArgs *ArgsHook = NULL;
 
@@ -147,6 +150,14 @@ int main(int argc, char *argv[])
                 psdRemHardware(phw);
             }
         } else {
+            UWORD other = nepPoseidonLoaded();
+            if(other)
+            {
+                Printf(NEP_OTHERSTACK_TXT "\n", (LONG) other);
+                CloseLibrary(ps);
+                FreeArgs(ArgsHook);
+                return RETURN_WARN;
+            }
             do
             {
                 /* Skipping rather than failing: with ALL this walks on to the next

@@ -25,52 +25,84 @@ At the request of the AROS Development Team, this project no longer presents its
 | | 6.0-6.2 | 6.3 |
 |---|---|---|
 | Library | `LIBS:poseidon.library` | `LIBS:neptune.library` |
-| Class drivers | `SYS:Classes/USB/` | `DEVS:USBClasses/` |
+| Class drivers | `SYS:Classes/USB/<name>.class` | `DEVS:USBClasses/<name>.usbclass` |
 | Control panel | `SYS:Prefs/Trident` | `SYS:Prefs/NeptuneUSB` ("Neptune USB") |
 | Commands | `PsdStackLoader`, `PsdDevLister`, `PsdErrorlog` | `USBStart`, `USBList`, `USBErrorlog` |
+| | `AddUSBHardware`, `AddUSBClasses` | `USBAddHardware`, `USBAddClasses` |
+| Optional tools | `DRadioTool`, `PencamTool`, `PowManTool`, `RocketTool`, `SonixcamTool`, `UPSTool` | `USBRadio`, `USBPencam`, `USBPowMan`, `USBRocket`, `USBSonixcam`, `USBUPS` |
 | Settings | `ENV(ARC):Sys/poseidon.prefs` | `ENV(ARC):Sys/neptune.prefs` |
 | Sounds | `SYS:Prefs/Presets/Poseidon/` | `SYS:Prefs/Presets/Neptune/` |
 | Device popups | "Poseidon Popups" (PoPo) | "USB device notifications" |
 | Settings-file datatype | `PSD` | `Neptune` |
 | Archive | `Poseidon-<ver>-<cpu>.lha` | `Neptune-<ver>-<cpu>.lha` |
 
-`AddUSBHardware`, `AddUSBClasses`, `USBEject` and the optional tools keep their names.
+Every Neptune command now starts with `USB`, and every class driver ends in `.usbclass`, so
+installing Neptune no longer replaces a Poseidon 4.x command, tool or class, and neither stack
+can pick up the other's classes.
+
+**One USB stack at a time:** Neptune does not start its USB controllers while Poseidon is
+loaded. `USBStart` and `USBAddHardware` say why and stop, and so does Neptune USB in its log;
+reboot without Poseidon. A Neptune class whose device
+(`usbscsi.device`, `usbparallel.device`, ...) another USB stack already provides does not
+start, and the log says so.
 
 **What the installer does:**
 
 * It disables the `Poseidon USB Stack` block in `S:User-Startup`, so the old stack is not
   started next to Neptune, and adds a `Neptune USB Stack` block if you ask for autostart.
+  With a Poseidon 4.x installed the block is left alone: its installer uses it too.
 * It offers to remove the 6.0-6.2 files listed above. Only files that report version 6 or
   newer are removed, so a classic Poseidon is never touched, and `poseidon.prefs` is kept.
+* It removes the 6.0-6.2 copies of `AddUSBHardware`, `AddUSBClasses` and the optional tools,
+  again only those that report version 6 or newer. If an earlier installation overwrote a
+  Poseidon 4.x's `AddUSBHardware` or `AddUSBClasses`, copy them back from the 4.x archive.
 * It copies sounds you added to `SYS:Prefs/Presets/Poseidon/` into the new drawer.
 
 **Your settings:** on first start, if there is no `neptune.prefs`, Neptune imports
-`poseidon.prefs`, moves the class and sound paths to the new drawers, and saves the result
-as `neptune.prefs`. Loading an old settings file by hand converts it the same way.
+`poseidon.prefs`, moves the class and sound paths to the new drawers and class names, and saves
+the result as `neptune.prefs`. Loading an old settings file by hand converts it the same way.
+A classic Poseidon's (4.x) `poseidon.prefs` is not imported: Neptune starts with its defaults.
+Neptune saves its settings in a format of its own, which Poseidon does not read.
 Neptune USB's saved window positions start afresh, because the program's name changed.
 
 **Programmers:** the library is opened as `NEPTUNENAME` (`"neptune.library"`), version
 `NEPTUNE_LIB_MIN_VERSION`, with `<libraries/neptune.h>` and `<proto/neptune.h>`; the base is
-`NeptuneBase`. The `psd*()` function names, structures and tags are unchanged.
+`NeptuneBase`. The `psd*()` function names, structures and tags are unchanged; the settings
+file's outer form is `IFFFORM_NEPCFG` (`NEPC`, was `IFFFORM_PSDCFG`).
+The class protocol header is now `<libraries/neptune_class.h>`, with
+`<proto/neptune_class.h>` (was `usbclass.h`, the name PoseidonDev uses); the base
+`UsbClsBase`, the `usb*()` functions, tags and methods are unchanged. A class is built as
+`<name>.usbclass`; file, romtag and library name must agree.
 Classes built for 6.0-6.2 open `poseidon.library` and must be rebuilt.
 
 The notes for 6.0-6.2 below keep the names those releases used.
 
 ## USB cameras
 
-The new `usbvideo.class` drives webcams that follow the USB Video Class standard (UVC 1.0,
+The new `usbvideo.usbclass` drives webcams that follow the USB Video Class standard (UVC 1.0,
 1.1 and 1.5). It needs `xhci.device` 6.4 from the Emu68 driver stack on a Pi 4 or CM4.
 Tested with a Logitech C930e, up to 1920x1080 at 30 frames a second.
 
 * **Formats:** Motion-JPEG and uncompressed (YUY2, NV12 and others) in every size and rate
   the camera offers, and H.264 from cameras that carry it inside Motion-JPEG, such as the
   C930e. Other H.264 and VP8 cameras and bulk-transfer cameras should work but are untested.
-* **cAMIra and other VHI programs:** the Installer offers to put `usbvideo.vhi` into
+* **cAMIra and other VHI programs:** the Installer offers to put `neptune.vhi` into
   `LIBS:VHI/`. Each camera is one input.
 * **Camera settings** in Neptune USB: brightness, exposure, focus, white balance and the other
   standard controls, applied at once and saved per camera.
-* **`UVCTool`** (optional tools) lists a camera's modes and saves pictures or H.264 video,
-  e.g. `UVCTool TO=RAM:shot`.
+* **`USBVideo`** (optional tools) lists a camera's modes and records video into `.mkv` files,
+  which play and seek on a PC and survive a crash up to the last frame written: H.264 and MJPEG,
+  and uncompressed YUY2 and NV12 for a PC to work on. A file goes up to 4 GiB, then the recording
+  goes on in the next. Each recording gets the next free number, so none is written over: `USBVideo
+  FORMAT=H264 FRAMES=300 TO=RAM:cam` makes `RAM:cam-0001.mkv`, and without `FRAMES` it records
+  until Ctrl-C. From its icon, or with `USBVideo GUI`, it opens a window (needs MUI) to pick a
+  camera and a mode, record, and open the camera's settings.
+* **A live picture from the camera:** with `videocodec.library` installed (PiStorm on a
+  Raspberry Pi 4 or CM4) and a Picasso96 Workbench, starting an MJPEG, H.264, YUY2 or NV12 mode
+  opens a second window with the picture, made by the VideoCore (YUY2 and NV12 look a little flat:
+  the VideoCore reads their colours as full range). Drag its corner to any size.
+  `USBVideo PREVIEW` does the same from the Shell, without MUI. If the picture never comes, the
+  VideoCore is short of memory: raise `gpu_mem` in `config.txt`.
 * **The camera's microphone** shows up as an AHI recording mode, and an idle camera is
   suspended when power saving is on.
 
@@ -113,19 +145,44 @@ interface once in the MIDI Ports editor.
 
 ## Bug fixes
 
+* **FAT sticks and drives** read and write several times faster. Copying a 64 MB file from a
+  USB 3 stick to `RAM:` went from 2.8 to 18.7 MB/s, and a drawer of 594 small files copies to
+  the stick in 12 s instead of 47 s. Mass storage no longer mounts volumes with settings that
+  kept fat95 off its fast path (GH #24).
 * Rare crashes and freezes under heavy load.
 * **Behringer UMC204HD** now works, and its MIDI port appears once instead of twice.
 * **NTFS and exFAT:** The filesystem stack size is now a setting in the mass storage settings.
 * A busy device is no longer logged as a failed suspend.
+* A device used at the very moment power saving put it to sleep could stop responding.
 * No more "Adding RT Iso Handler failed" and silent audio after a device refused a setting
   change.
 * A hub could stop seeing new devices after one was unplugged, until a reboot.
 * Possible crash when a class driver was unloaded while still in use.
 * Better recovery from errors on UAS disks.
+* **USB floppy drives and other CBI devices** no longer stop responding after a failed
+  command.
 * Possible crash on disk change with several partitions.
-* **USB keyboards with `input.device` 50.x** (the 2003 68k one, version 50.26, found in some
-  custom Kickstarts): a key pressed once no longer repeats for ever. The classes now use the
-  3.2 `input.device` command only when the device reports that it has it.
+* **USB drives** come back after Restart in Neptune USB, and when every drive has gone away and
+  one returns within seconds (a quick replug, a hub power cycle); their volumes used to stay
+  missing.
+* Automatic restart of a USB device that stopped responding now also works with notifications
+  switched off, before Workbench and from ROM.
+* USB audio and video devices could be kept from power saving after a program quit without
+  stopping its stream.
+* **Full-speed host controllers** (such as the Subway clockport card) work again; since 6.1
+  their root hub failed to enumerate.
+* **USB audio:** webcam microphones now offer input gain; a second program can no longer
+  open a device already in use; unplugging no longer leaks memory.
+* **Standard USB network devices** (cdceth, CDC ECM/NCM) now pass traffic, including
+  multicast; NCM no longer drops packets under load. The cdceth fixes were contributed by
+  Maxime Vincent.
+* **USB network adapters** (asixeth, davicometh, ethwrap, lan78xx, moschipeth, pegasuseth,
+  rndis): fixed packet corruption or crashes, refused station addresses, and a send that
+  could hang the program.
+* **USB keyboards on `input.device` 50.x** (some custom Kickstarts): a key pressed once no
+  longer repeats for ever. Contributed by pcotter72.
+* **Flushing memory** (`Avail FLUSH`) with no USB device in use no longer hangs or resets the
+  machine. Contributed by pcotter72.
 
 # Release notes - Neptune 6.2 (released as Poseidon for AmigaOS 6.2)
 

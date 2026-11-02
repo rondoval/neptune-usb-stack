@@ -12,18 +12,41 @@
 #include <dos/dos.h>
 #include <exec/errors.h>
 #include <exec/memory.h>
+#include <devices/usb_video.h>
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "uvc_client.h"
 #include "mjpegdht.h"
 
-#define NAME_SIZE   256 /* frame file name buffer */
-#define DIGITS_MAX  10  /* decimal digits of a ULONG */
 #define FOURCC_LEN  4
-#define ENDING_SIZE (1 + DIGITS_MAX + 1 + FOURCC_LEN + 1) /* suffix after the stem: "-", number,
-                                                            ".", extension, NUL */
+#define REPORT_SIZE (UVC_NAME_SIZE + 64) /* a failure's text in the Shell, a file name in it */
+#define READ_ALIGN  64 /* of a read's buffer: a cache line, for a decoder that reads it in place */
+#define REOPEN_SECS 5  /* that the class may take to stop an orphaned stream */
+
+#define NAL_TYPE_MASK   0x1f
+#define NAL_SLICE       1 /* of a frame that is no key frame */
+#define NAL_SLICE_LAST  4 /* its data partitions, up to here */
+#define NAL_SLICE_IDR   5
+
+UBYTE *uvcReportTo;
+
+/* Describe a failure: into uvcReportTo, else to the Shell */
+void uvcReport(const char *format, ...)
+{
+    UBYTE text[REPORT_SIZE];
+    va_list args;
+
+    va_start(args, format);
+    vsnprintf((char *) (uvcReportTo ? uvcReportTo : text), uvcReportTo ? UVC_TEXT_SIZE : sizeof(text), format, args);
+    va_end(args);
+    if(!uvcReportTo)
+    {
+        Printf("%s\n", text);
+    }
+}
 
 /*
  * Camera
@@ -45,6 +68,7 @@ STRPTR uvcErrorText(LONG err)
         case UVERR_USB:         return "USB transfer failed";
         case UVERR_NOSTATUS:    return "the camera has no status endpoint";
         case IOERR_NOCMD:       return "command not supported";
+        case IOERR_OPENFAIL:    return "could not open";
         case IOERR_BADLENGTH:   return "bad length";
         case IOERR_ABORTED:     return "aborted";
     }
@@ -60,6 +84,26 @@ LONG uvcCommand(struct IOStdReq *ioreq, UWORD command, APTR data, ULONG len)
     return DoIO((struct IORequest *) ioreq);
 }
 
+/* Send a raw class request to an entity (NSCMD_UV_REQUEST), for controls the
+   device has no name for. Return io_Error; *reason receives the camera's
+   request error code. */
+LONG uvcRequest(struct IOStdReq *ioreq, ULONG request, ULONG entity, ULONG selector, APTR data, ULONG len, UBYTE *reason)
+{
+    struct UsbVideoRequest uvr =
+    {
+        .uvr_Request = request,
+        .uvr_Entity = entity,
+        .uvr_Selector = selector,
+        .uvr_ErrorCode = UVREC_NO_ERROR,
+        .uvr_Length = len,
+        .uvr_Data = data
+    };
+    LONG err = uvcCommand(ioreq, NSCMD_UV_REQUEST, &uvr, sizeof(uvr));
+
+    *reason = uvr.uvr_ErrorCode;
+    return err;
+}
+
 /* Read the mode table (NSCMD_UV_GETMODES) into an AllocVec'd buffer.
    On failure print the reason and return FALSE. */
 static BOOL readModes(struct UvcCamera *cm)
@@ -72,7 +116,7 @@ static BOOL readModes(struct UvcCamera *cm)
     }
     if(!(cm->cm_Modes = AllocVec(size, MEMF_ANY)))
     {
-        PutStr("Not enough memory for the list of modes\n");
+        uvcReport("Not enough memory for the list of modes");
         return FALSE;
     }
 
@@ -80,11 +124,37 @@ static BOOL readModes(struct UvcCamera *cm)
 
     if(err)
     {
-        Printf("Could not read the modes: %s\n", uvcErrorText(err));
+        uvcReport("Could not read the modes: %s", uvcErrorText(err));
         return FALSE;
     }
     cm->cm_ModesSize = cm->cm_Request->io_Actual;
     return TRUE;
+}
+
+/* Find the camera's H.264 extension unit (NSCMD_UV_GETTOPOLOGY); cm_H264Unit
+   stays 0 if it has none */
+static void findH264Unit(struct UvcCamera *cm)
+{
+    static const UBYTE guid[sizeof(((struct UsbVideoEntity *) 0)->uve_GUID)] = UVCX_H264_XU_GUID;
+    ULONG size = cm->cm_Info.uvi_TopologySize;
+    UBYTE *table = AllocVec(size, MEMF_ANY);
+
+    if(table && !uvcCommand(cm->cm_Request, NSCMD_UV_GETTOPOLOGY, table, size))
+    {
+        ULONG actual = cm->cm_Request->io_Actual;
+
+        for(ULONG pos = 0; (pos < actual) && !cm->cm_H264Unit; )
+        {
+            const struct UsbVideoEntity *uve = (const struct UsbVideoEntity *) (table + pos);
+
+            if((uve->uve_Type == UDST_VIDEO_CTRL_EXTENSION_UNIT) && !memcmp(uve->uve_GUID, guid, sizeof(guid)))
+            {
+                cm->cm_H264Unit = uve->uve_ID;
+            }
+            pos += uve->uve_Size;
+        }
+    }
+    FreeVec(table);
 }
 
 /* Create port and request, open the unit, read NSCMD_UV_GETINFO and the
@@ -98,7 +168,7 @@ BOOL uvcOpenCamera(struct UvcCamera *cm, ULONG unit)
     cm->cm_Request = (struct IOStdReq *) CreateIORequest(cm->cm_Port, sizeof(struct IOVideoReq));
     if(!cm->cm_Request)
     {
-        PutStr("Not enough memory\n");
+        uvcReport("Not enough memory");
         return FALSE;
     }
 
@@ -106,16 +176,17 @@ BOOL uvcOpenCamera(struct UvcCamera *cm, ULONG unit)
 
     if(err)
     {
-        Printf((err == IOERR_UNITBUSY) ? "The camera on unit %ld is in use by another program.\n"
-                                       : "There is no camera on unit %ld.\n", unit);
+        uvcReport((err == IOERR_UNITBUSY) ? "The camera on unit %ld is in use by another program."
+                                          : "There is no camera on unit %ld.", unit);
         return FALSE;
     }
     cm->cm_Open = TRUE;
     if((err = uvcCommand(cm->cm_Request, NSCMD_UV_GETINFO, &cm->cm_Info, sizeof(cm->cm_Info))))
     {
-        Printf("The camera did not answer: %s\n", uvcErrorText(err));
+        uvcReport("The camera did not answer: %s", uvcErrorText(err));
         return FALSE;
     }
+    findH264Unit(cm);
     return readModes(cm);
 }
 
@@ -124,13 +195,69 @@ void uvcCloseCamera(struct UvcCamera *cm)
 {
     FreeVec(cm->cm_Modes);
     cm->cm_Modes = NULL;
+    uvcCloseUnit(cm);
+    DeleteIORequest((struct IORequest *) cm->cm_Request);
+    DeleteMsgPort(cm->cm_Port);
+}
+
+/* Ask the camera's encoder for a key frame that brings its parameter sets
+   (the stream's next picture). Return FALSE if the camera has no H.264 unit,
+   or refused: the key frame then comes when the camera's interval says so.
+   Does not wait for the picture; while the stream runs, a read may reply
+   during the command, so look at the port afterwards whatever came. */
+BOOL uvcRequestKeyFrame(struct UvcCamera *cm)
+{
+    struct UvcxPictureType pic = { 0, AROS_WORD2LE(2) };
+    UBYTE reason;
+
+    return cm->cm_H264Unit && !uvcRequest(cm->cm_Request, UVUDR_SET_CUR, cm->cm_H264Unit, UVCX_PICTURE_TYPE_CONTROL,
+                                          &pic, sizeof(pic), &reason);
+}
+
+/* Set the mode asked for in uvq (NSCMD_UV_SETMODE); uvq takes the mode the
+   camera settled on. On failure report the reason. Return io_Error. */
+LONG uvcSetMode(struct UvcCamera *cm, struct UsbVideoModeReq *uvq)
+{
+    uvq->uvq_MaxFrameSize = 0; /* the device's to write */
+
+    LONG err = uvcCommand(cm->cm_Request, NSCMD_UV_SETMODE, uvq, sizeof(*uvq));
+
+    if(err)
+    {
+        uvcReport("Could not set that mode: %s", uvcErrorText(err));
+    }
+    return err;
+}
+
+/* Close the unit, if it is open, keeping its info and mode table: another
+   opener may have it then (the stream process, the VHI driver) */
+void uvcCloseUnit(struct UvcCamera *cm)
+{
     if(cm->cm_Open)
     {
         CloseDevice((struct IORequest *) cm->cm_Request);
         cm->cm_Open = FALSE;
     }
-    DeleteIORequest((struct IORequest *) cm->cm_Request);
-    DeleteMsgPort(cm->cm_Port);
+}
+
+/* Close the unit and open it again, as a program that ends and starts anew,
+   waiting up to REOPEN_SECS while the class still holds the old open's
+   stream (IOERR_UNITBUSY). *waited takes the ticks it waited. Return the
+   OpenDevice() error, 0 if the unit is open again; cm_Open says the same. */
+LONG uvcReopenCamera(struct UvcCamera *cm, ULONG *waited)
+{
+    struct IORequest *ioreq = (struct IORequest *) cm->cm_Request;
+    LONG err;
+
+    *waited = 0;
+    uvcCloseUnit(cm);
+    while(((err = OpenDevice(USBVIDEO_NAME, cm->cm_Unit, ioreq, 0)) == IOERR_UNITBUSY) &&
+          (++*waited <= REOPEN_SECS * TICKS_PER_SECOND))
+    {
+        Delay(1);
+    }
+    cm->cm_Open = !err;
+    return err;
 }
 
 /*
@@ -139,7 +266,7 @@ void uvcCloseCamera(struct UvcCamera *cm)
 
 /* Print the frame rate with one decimal for an interval in 100 ns units;
    "?" for 0 */
-void uvcPrintRate(ULONG interval)
+static void printRate(ULONG interval)
 {
     if(interval)
     {
@@ -149,12 +276,15 @@ void uvcPrintRate(ULONG interval)
     }
 }
 
-/* Print a FourCC as four characters */
-void uvcPrintFourCC(ULONG fourcc)
+/* Write a FourCC as four characters into text, UVC_FOURCC_SIZE bytes; return text */
+UBYTE *uvcFourCCText(ULONG fourcc, UBYTE *text)
 {
-    UBYTE name[FOURCC_LEN + 1] = { fourcc >> 24, fourcc >> 16, fourcc >> 8, fourcc, 0 };
-
-    PutStr(name);
+    text[0] = fourcc >> 24;
+    text[1] = fourcc >> 16;
+    text[2] = fourcc >> 8;
+    text[3] = fourcc;
+    text[4] = 0;
+    return text;
 }
 
 /* Convert a string to a FourCC, space-padded to four characters, case
@@ -191,47 +321,40 @@ void uvcPrintCamera(const struct UvcCamera *cm)
 /* Print the mode table, one line per mode */
 void uvcPrintModes(const struct UvcCamera *cm)
 {
-    for(ULONG pos = 0; pos < cm->cm_ModesSize; )
+    UVC_EACH_MODE(uvm, cm->cm_Modes, cm->cm_ModesSize)
     {
-        const struct UsbVideoMode *uvm = (const struct UsbVideoMode *) ((const UBYTE *) cm->cm_Modes + pos);
+        UBYTE name[UVC_FOURCC_SIZE];
 
-        PutStr("  ");
-        uvcPrintFourCC(uvm->uvm_FourCC);
-        Printf(" %4ldx%-4ld  ", (ULONG) uvm->uvm_Width, (ULONG) uvm->uvm_Height);
+        Printf("  %s %4ldx%-4ld  ", uvcFourCCText(uvm->uvm_FourCC, name), (ULONG) uvm->uvm_Width, (ULONG) uvm->uvm_Height);
         if(uvm->uvm_Flags & UVMF_CONTINUOUS)
         {
-            uvcPrintRate(uvm->uvm_Intervals[1]);
+            printRate(uvm->uvm_Intervals[1]);
             PutStr(" to ");
-            uvcPrintRate(uvm->uvm_Intervals[0]);
+            printRate(uvm->uvm_Intervals[0]);
             PutStr(" fps");
         } else {
             for(ULONG cnt = 0; cnt < uvm->uvm_NumIntervals; cnt++)
             {
-                uvcPrintRate(uvm->uvm_Intervals[cnt]);
+                printRate(uvm->uvm_Intervals[cnt]);
                 PutStr((cnt + 1 < uvm->uvm_NumIntervals) ? ", " : " fps");
             }
         }
         PutStr(", default ");
-        uvcPrintRate(uvm->uvm_DefInterval);
+        printRate(uvm->uvm_DefInterval);
         PutStr((uvm->uvm_Flags & UVMF_DEFAULT) ? "  <- the default (the settings window's, else the camera's)\n" : "\n");
-        pos += uvm->uvm_Size;
     }
 }
 
 /* Print the negotiated mode returned by NSCMD_UV_SETMODE: format, size,
-   frame rate */
+   frame rate, and the bit rate and key frame interval if the mode's encoder
+   accepted either */
 void uvcPrintMode(const struct UsbVideoModeReq *uvq)
 {
-    uvcPrintFourCC(uvq->uvq_FourCC);
-    Printf(" %ldx%ld at ", (ULONG) uvq->uvq_Width, (ULONG) uvq->uvq_Height);
-    uvcPrintRate(uvq->uvq_Interval);
-    PutStr(" fps");
-}
+    UBYTE name[UVC_FOURCC_SIZE];
 
-/* Print ", <bit rate>, <key frame interval>" if the mode's encoder accepted
-   either; print nothing otherwise */
-void uvcPrintEncoder(const struct UsbVideoModeReq *uvq)
-{
+    Printf("%s %ldx%ld at ", uvcFourCCText(uvq->uvq_FourCC, name), (ULONG) uvq->uvq_Width, (ULONG) uvq->uvq_Height);
+    printRate(uvq->uvq_Interval);
+    PutStr(" fps");
     if(uvq->uvq_BitRate || uvq->uvq_KeyInterval)
     {
         Printf(", %ld bits a second, a key frame every %ld ms", uvq->uvq_BitRate, uvq->uvq_KeyInterval);
@@ -242,382 +365,271 @@ void uvcPrintEncoder(const struct UsbVideoModeReq *uvq)
  * Capture
  */
 
-/* Create UVC_NUM_READS CMD_READ requests with framesize-byte buffers on the
-   camera port and submit them. Requests that fail to allocate are skipped,
-   the rest are submitted anyway. Return TRUE if all were submitted. */
-static BOOL makeReads(struct UvcCapture *cp, ULONG framesize)
+/* Start a capture in the mode already set: submit the reads and send
+   CMD_START. On failure report the reason and return FALSE. Call
+   uvcStopCapture() in either case. */
+BOOL uvcStartCapture(struct UvcCapture *cp, struct UvcCamera *cm, const struct UsbVideoModeReq *uvq)
 {
-    struct IOStdReq *ioreq = cp->cp_Camera->cm_Request;
-    ULONG sent = 0;
-
-    for(ULONG cnt = 0; cnt < UVC_NUM_READS; cnt++)
-    {
-        struct IOVideoReq *ivr = (struct IOVideoReq *) CreateIORequest(cp->cp_Camera->cm_Port, sizeof(struct IOVideoReq));
-
-        cp->cp_Reads[cnt] = ivr;
-        if(!ivr)
-        {
-            continue;
-        }
-        ivr->ivr_Std.io_Device = ioreq->io_Device;
-        ivr->ivr_Std.io_Unit = ioreq->io_Unit;
-        ivr->ivr_Std.io_Command = CMD_READ;
-        ivr->ivr_Std.io_Length = framesize;
-        if((ivr->ivr_Std.io_Data = AllocVec(framesize, MEMF_ANY)))
-        {
-            SendIO((struct IORequest *) ivr);
-            sent++;
-        }
-    }
-    return sent == UVC_NUM_READS;
+    return uvcMakeReads(cp, cm, 0, uvq->uvq_MaxFrameSize, MEMF_ANY) && uvcStartStream(cp);
 }
 
-/* Reclaim and free all reads: abort and WaitIO() those still at the
-   device, then free buffers and requests. cp_InHand is the only read off
-   the device; it was taken with GetMsg() and must not be WaitIO()'d */
-static void takeReadsBack(struct UvcCapture *cp)
+/* Return the read holding the next complete frame, waiting for one; it is
+   the caller's until the next call, which resubmits it (cp_InHand). NULL
+   ends the capture; cp_Error or cp_Interrupted gives the reason. Ctrl-C is
+   checked before every take, so a continuous frame flow cannot starve it. */
+struct IOVideoReq *uvcNextFrame(struct UvcCapture *cp)
 {
-    for(ULONG cnt = 0; cnt < UVC_NUM_READS; cnt++)
+    ULONG signals = (1UL << cp->cp_Camera->cm_Port->mp_SigBit) | SIGBREAKF_CTRL_C;
+
+    if(cp->cp_InHand)
     {
-        struct IOVideoReq *ivr = cp->cp_Reads[cnt];
-
-        if(!ivr)
-        {
-            continue;
-        }
-        if(ivr->ivr_Std.io_Data)
-        {
-            if(ivr != cp->cp_InHand)
-            {
-                if(!CheckIO((struct IORequest *) ivr))
-                {
-                    AbortIO((struct IORequest *) ivr);
-                }
-                WaitIO((struct IORequest *) ivr);
-            }
-            FreeVec(ivr->ivr_Std.io_Data);
-        }
-        DeleteIORequest((struct IORequest *) ivr);
-        cp->cp_Reads[cnt] = NULL;
+        uvcSendRead(cp->cp_InHand);
+        cp->cp_InHand = NULL;
     }
-    cp->cp_InHand = NULL;
-}
-
-/* Return the next replied read, waiting if none is queued; NULL on Ctrl-C.
-   Ctrl-C is checked before every GetMsg() so a continuous frame flow cannot
-   starve it. */
-static struct IOVideoReq *nextRead(struct UvcCapture *cp)
-{
-    struct MsgPort *port = cp->cp_Camera->cm_Port;
-    ULONG signals = (1UL << port->mp_SigBit) | SIGBREAKF_CTRL_C;
-
     while(!(SetSignal(0, SIGBREAKF_CTRL_C) & SIGBREAKF_CTRL_C))
     {
-        struct IOVideoReq *ivr = (struct IOVideoReq *) GetMsg(port);
+        struct UvcRead *rd = uvcTakeFrame(cp);
 
-        if(ivr)
+        if(rd)
         {
-            return ivr;
+            cp->cp_InHand = rd;
+            return rd->rd_Req;
+        }
+        if(cp->cp_Error)
+        {
+            return NULL;
         }
         if(Wait(signals) & SIGBREAKF_CTRL_C)
         {
             break;
         }
     }
+    cp->cp_Interrupted = TRUE;
     return NULL;
 }
 
-/* Add the sequence gap since the previous frame to cp_Missed */
-static void countGap(struct UvcCapture *cp, const struct IOVideoReq *ivr)
+/* End a capture: stop the stream, reclaim and free all reads */
+void uvcStopCapture(struct UvcCapture *cp)
 {
-    if(cp->cp_LastSeq)
+    uvcHaltCapture(cp);
+    UVC_EACH_READ(rd, cp)
     {
-        cp->cp_Missed += ivr->ivr_Sequence - cp->cp_LastSeq - 1;
+        FreeVec(rd->rd_Memory);
+        rd->rd_Memory = NULL;
+        DeleteIORequest((struct IORequest *) rd->rd_Req);
+        rd->rd_Req = NULL;
     }
-    cp->cp_LastSeq = ivr->ivr_Sequence;
 }
 
-/* Start a capture in the mode already set: submit the reads, open the
-   output if stem is not NULL, send CMD_START. On failure print the reason
-   and return FALSE. Call uvcStopCapture() in either case. */
-BOOL uvcStartCapture(struct UvcCapture *cp, struct UvcCamera *cm, const struct UsbVideoModeReq *uvq, STRPTR stem)
+/*
+ * Reads
+ */
+
+/* Prepare a capture whose loop is the caller's: UVC_NUM_READS requests on the
+   camera's port, none sent, each with a buffer of memflags memory that takes
+   size bytes after room bytes, which stay free and clear. On failure report
+   the reason and return FALSE. Call uvcStopCapture() in either case. */
+BOOL uvcMakeReads(struct UvcCapture *cp, struct UvcCamera *cm, ULONG room, ULONG size, ULONG memflags)
 {
+    struct IOStdReq *ioreq = cm->cm_Request;
+
     memset(cp, 0, sizeof(*cp));
     cp->cp_Camera = cm;
-    if(!makeReads(cp, uvq->uvq_MaxFrameSize))
+    UVC_EACH_READ(rd, cp)
     {
-        Printf("Not enough memory for %ld buffers of %ld bytes\n", (ULONG) UVC_NUM_READS, uvq->uvq_MaxFrameSize);
-        return FALSE;
-    }
-    if(!uvcOpenFiles(&cp->cp_Files, stem, uvq->uvq_FourCC))
-    {
-        return FALSE;
-    }
+        struct IOVideoReq *ivr = (struct IOVideoReq *) CreateIORequest(cm->cm_Port, sizeof(struct IOVideoReq));
 
-    LONG err = uvcCommand(cm->cm_Request, CMD_START, NULL, 0);
+        rd->rd_Req = ivr;
+        rd->rd_Memory = AllocVec(room + size + READ_ALIGN - 1, memflags);
+        if(!ivr || !rd->rd_Memory)
+        {
+            uvcReport("Not enough memory for %ld buffers of %ld bytes", (ULONG) UVC_NUM_READS, room + size);
+            return FALSE;
+        }
+        rd->rd_Buffer = (UBYTE *) (((ULONG) rd->rd_Memory + READ_ALIGN - 1) & ~(ULONG) (READ_ALIGN - 1));
+        memset(rd->rd_Buffer, 0, room);
+        ivr->ivr_Std.io_Device = ioreq->io_Device;
+        ivr->ivr_Std.io_Unit = ioreq->io_Unit;
+        ivr->ivr_Std.io_Command = CMD_READ;
+        ivr->ivr_Std.io_Data = rd->rd_Buffer + room;
+        ivr->ivr_Std.io_Length = size;
+    }
+    return TRUE;
+}
+
+/* Send a read that is in hand to the device */
+void uvcSendRead(struct UvcRead *rd)
+{
+    rd->rd_AtDevice = TRUE;
+    SendIO((struct IORequest *) rd->rd_Req);
+}
+
+/* Send every read that is in hand */
+void uvcSendReads(struct UvcCapture *cp)
+{
+    UVC_EACH_READ(rd, cp)
+    {
+        if(!rd->rd_AtDevice)
+        {
+            uvcSendRead(rd);
+        }
+    }
+}
+
+/* Return how many reads are at the device: the camera has a buffer for a
+   frame only while one is */
+ULONG uvcReadsAtDevice(const struct UvcCapture *cp)
+{
+    ULONG count = 0;
+
+    UVC_EACH_READ(rd, cp)
+    {
+        count += rd->rd_AtDevice;
+    }
+    return count;
+}
+
+/* Return a read that came back, now in hand; NULL if none did */
+static struct UvcRead *takeRead(struct UvcCapture *cp)
+{
+    struct IOVideoReq *ivr = (struct IOVideoReq *) GetMsg(cp->cp_Camera->cm_Port);
+
+    if(ivr)
+    {
+        UVC_EACH_READ(rd, cp)
+        {
+            if(rd->rd_Req == ivr)
+            {
+                rd->rd_AtDevice = FALSE;
+                return rd;
+            }
+        }
+    }
+    return NULL;
+}
+
+/* Return a read that came back with a frame, now in hand, sequence gaps
+   counted; NULL if none did. It gets no WaitIO(). A frame too long for the
+   buffer is counted, dropped and its read sent again. What ends the capture
+   sets cp_Error, the read staying in hand. Call until NULL before every
+   Wait(): a DoIO() on the camera's request waits on the same port and can eat
+   the signal of a read that came meanwhile. */
+struct UvcRead *uvcTakeFrame(struct UvcCapture *cp)
+{
+    struct UvcRead *rd;
+
+    while((rd = takeRead(cp)))
+    {
+        struct IOVideoReq *ivr = rd->rd_Req;
+        LONG err = ivr->ivr_Std.io_Error;
+
+        if(err && (err != UVERR_OVERFLOW))
+        {
+            cp->cp_Error = err;
+            return NULL;
+        }
+        if(cp->cp_LastSeq)
+        {
+            cp->cp_Missed += ivr->ivr_Sequence - cp->cp_LastSeq - 1;
+        }
+        cp->cp_LastSeq = ivr->ivr_Sequence;
+        if(!err)
+        {
+            return rd;
+        }
+        cp->cp_TooLong++;
+        uvcSendRead(rd);
+    }
+    return NULL;
+}
+
+/* Send the reads, then CMD_START. On failure report the reason and return
+   FALSE. */
+BOOL uvcStartStream(struct UvcCapture *cp)
+{
+    uvcSendReads(cp);
+
+    LONG err = uvcCommand(cp->cp_Camera->cm_Request, CMD_START, NULL, 0);
 
     if(err)
     {
-        Printf("Could not start the stream: %s\n", uvcErrorText(err));
+        uvcReport("Could not start the stream: %s", uvcErrorText(err));
         return FALSE;
     }
     cp->cp_Streaming = TRUE;
     return TRUE;
 }
 
-/* Return the read holding the next complete frame. Resubmit cp_InHand
-   first, count sequence gaps, drop UVERR_OVERFLOW frames, write the frame
-   if the capture has output. NULL ends the capture; cp_Error,
-   cp_Interrupted or cp_NotSaved gives the reason. */
-struct IOVideoReq *uvcNextFrame(struct UvcCapture *cp)
-{
-    struct IOVideoReq *ivr;
-
-    if(cp->cp_InHand)
-    {
-        SendIO((struct IORequest *) cp->cp_InHand);
-        cp->cp_InHand = NULL;
-    }
-    while((ivr = nextRead(cp)))
-    {
-        LONG err = ivr->ivr_Std.io_Error;
-
-        if(err == UVERR_OVERFLOW)
-        {
-            countGap(cp, ivr);
-            cp->cp_TooLong++;
-            SendIO((struct IORequest *) ivr);
-            continue;
-        }
-        /* kept off the device until the next call, also when it ends the capture */
-        cp->cp_InHand = ivr;
-        if(err)
-        {
-            cp->cp_Error = err;
-            return NULL;
-        }
-        countGap(cp, ivr);
-        if(!uvcWriteFrame(&cp->cp_Files, ivr->ivr_Std.io_Data, ivr->ivr_Std.io_Actual))
-        {
-            cp->cp_NotSaved = TRUE;
-            return NULL;
-        }
-        return ivr;
-    }
-    cp->cp_Interrupted = TRUE;
-    return NULL;
-}
-
-/* End a capture: CMD_STOP if streaming, reclaim and free all reads, close
-   the output */
-void uvcStopCapture(struct UvcCapture *cp)
+/* Stop the stream and take every read back, nothing freed: the memory of
+   the reads is the caller's to use until uvcStopCapture(). CMD_STOP comes
+   first: it hands back the read being filled, which an abort alone would not
+   while a silent camera holds it. A read taken with GetMsg() is not at the
+   device and gets no WaitIO(). */
+void uvcHaltCapture(struct UvcCapture *cp)
 {
     if(cp->cp_Streaming)
     {
         uvcCommand(cp->cp_Camera->cm_Request, CMD_STOP, NULL, 0);
         cp->cp_Streaming = FALSE;
     }
-    takeReadsBack(cp);
-    uvcCloseFiles(&cp->cp_Files);
+    UVC_EACH_READ(rd, cp)
+    {
+        if(rd->rd_AtDevice)
+        {
+            if(!CheckIO((struct IORequest *) rd->rd_Req))
+            {
+                AbortIO((struct IORequest *) rd->rd_Req);
+            }
+            WaitIO((struct IORequest *) rd->rd_Req);
+            rd->rd_AtDevice = FALSE;
+        }
+    }
+    cp->cp_InHand = NULL;
 }
 
 /*
- * Files
+ * Frames
  */
 
-/* Return TRUE for formats whose frames are segments of one elementary
-   stream, saved to a single file */
-BOOL uvcIsStream(ULONG fourcc)
+/* Return TRUE if an H.264 access unit in byte stream form is a key frame: its
+   first slice says, and AUD, SEI and parameter sets may come before that. */
+BOOL uvcH264Key(const UBYTE *data, ULONG len)
 {
-    return fourcc == UVFCC_H264;
-}
-
-/* Write the NUL-terminated file extension for a FourCC: "jpg" for MJPG,
-   else the FourCC lowercased with spaces removed (yuy2, h264) */
-static void extension(ULONG fourcc, UBYTE *ext)
-{
-    ULONG len = 0;
-
-    if(fourcc == UVFCC_MJPG)
+    for(ULONG pos = 0; pos + 3 < len; pos++)
     {
-        strcpy(ext, "jpg");
-        return;
-    }
-    for(LONG shift = (FOURCC_LEN - 1) * 8; shift >= 0; shift -= 8)
-    {
-        UBYTE ch = (UBYTE) (fourcc >> shift);
-
-        if(ch != ' ')
+        if(data[pos] || data[pos + 1] || (data[pos + 2] != 1))
         {
-            ext[len++] = ((ch >= 'A') && (ch <= 'Z')) ? ch + ('a' - 'A') : ch;
+            continue;
         }
+
+        ULONG kind = data[pos + 3] & NAL_TYPE_MASK;
+
+        if(kind == NAL_SLICE_IDR)
+        {
+            return TRUE;
+        }
+        if((kind >= NAL_SLICE) && (kind <= NAL_SLICE_LAST))
+        {
+            return FALSE;
+        }
+        pos += 2;
     }
-    ext[len] = 0;
-}
-
-/* Build the file name for a frame number: <stem>-NNNN.<ext>, or
-   <stem>.<ext> for a stream format. uvcOpenFiles() guarantees the result
-   fits NAME_SIZE; snprintf() would cut it rather than overrun. */
-static void fileName(const struct UvcFiles *fl, ULONG number, UBYTE *name)
-{
-    UBYTE ext[FOURCC_LEN + 1];
-
-    extension(fl->fl_FourCC, ext);
-    if(uvcIsStream(fl->fl_FourCC))
-    {
-        snprintf((char *) name, NAME_SIZE, "%s.%s", (char *) fl->fl_Stem, (char *) ext);
-    } else {
-        snprintf((char *) name, NAME_SIZE, "%s-%04lu.%s", (char *) fl->fl_Stem, number, (char *) ext);
-    }
-}
-
-/* Write len bytes; return TRUE if all were written */
-static BOOL writeAll(BPTR fh, const UBYTE *data, ULONG len)
-{
-    return Write(fh, (APTR) data, len) == (LONG) len;
-}
-
-/* Write one frame to an open file. An MJPEG frame without DHT gets the
-   standard Huffman tables inserted before SOS (MJPEG cameras omit them,
-   JPEG decoders need them); other formats are written unchanged. */
-static BOOL writeFrameData(BPTR fh, ULONG fourcc, const UBYTE *frame, ULONG len)
-{
-    ULONG dhtpos = (fourcc == UVFCC_MJPG) ? mjpegMissingDHT(frame, len) : 0;
-
-    if(!dhtpos)
-    {
-        return writeAll(fh, frame, len);
-    }
-    return writeAll(fh, frame, dhtpos) && writeAll(fh, MJPEGStdDHT, MJPEG_STD_DHT_SIZE) &&
-           writeAll(fh, frame + dhtpos, len - dhtpos);
-}
-
-/* Initialise the output; open the file now for a stream format. A NULL
-   stem disables saving. If the stem is too long for NAME_SIZE or the stream
-   file cannot be opened, print the reason, leave saving disabled and
-   return FALSE. */
-BOOL uvcOpenFiles(struct UvcFiles *fl, STRPTR stem, ULONG fourcc)
-{
-    fl->fl_Stem = NULL;
-    fl->fl_FourCC = fourcc;
-    fl->fl_Stream = 0;
-    fl->fl_Saved = 0;
-    if(!stem)
-    {
-        return TRUE;
-    }
-    if(strlen(stem) + ENDING_SIZE > NAME_SIZE)
-    {
-        Printf("The name '%s' is too long\n", stem);
-        return FALSE;
-    }
-    fl->fl_Stem = stem;
-    if(!uvcIsStream(fourcc))
-    {
-        return TRUE;
-    }
-
-    UBYTE name[NAME_SIZE];
-
-    fileName(fl, 0, name);
-    if(!(fl->fl_Stream = Open(name, MODE_NEWFILE)))
-    {
-        Printf("Could not open '%s' for writing\n", name);
-        fl->fl_Stem = NULL;
-        return FALSE;
-    }
-    return TRUE;
-}
-
-/* Append a frame to the open stream file, as it came. The file name is
-   built only for the failure message. */
-static BOOL appendToStream(struct UvcFiles *fl, const UBYTE *frame, ULONG len)
-{
-    if(writeAll(fl->fl_Stream, frame, len))
-    {
-        return TRUE;
-    }
-
-    UBYTE name[NAME_SIZE];
-
-    fileName(fl, 0, name);
-    Printf("Could not write '%s'\n", name);
     return FALSE;
 }
 
-/* Write a frame to a new file of its own, named after its number. On
-   failure print the reason and return FALSE. */
-static BOOL writeFrameFile(struct UvcFiles *fl, const UBYTE *frame, ULONG len)
+/* Is a picture in this frame, and all of it? A frame without SOF is a JPEG
+   with nothing in it, which some cameras send when the source gives them
+   no picture. Return the length of the frame up to and with its EOI, past
+   any padding; 0 if it has no picture or no EOI. */
+ULONG uvcJpegLength(const UBYTE *frame, ULONG len)
 {
-    UBYTE name[NAME_SIZE];
-
-    fileName(fl, fl->fl_Saved + 1, name);
-
-    BPTR fh = Open(name, MODE_NEWFILE);
-
-    if(!fh)
+    if(!mjpegFrameHeader(frame, len))
     {
-        Printf("Could not open '%s' for writing\n", name);
-        return FALSE;
+        return 0;
     }
-
-    BOOL ok = writeFrameData(fh, fl->fl_FourCC, frame, len);
-
-    Close(fh);
-    if(!ok)
+    while((len > 2) && (!frame[len - 1] || (frame[len - 1] == 0xff)))
     {
-        Printf("Could not write '%s'\n", name);
+        len--;
     }
-    return ok;
-}
-
-/* Write the next frame to a new file, or append it to the stream file. On
-   failure print the reason and return FALSE. */
-BOOL uvcWriteFrame(struct UvcFiles *fl, const UBYTE *frame, ULONG len)
-{
-    if(!fl->fl_Stem)
-    {
-        return TRUE;
-    }
-
-    BOOL ok = fl->fl_Stream ? appendToStream(fl, frame, len) : writeFrameFile(fl, frame, len);
-
-    if(ok)
-    {
-        fl->fl_Saved++;
-    }
-    return ok;
-}
-
-/* Close the stream file, if open */
-void uvcCloseFiles(struct UvcFiles *fl)
-{
-    if(fl->fl_Stream)
-    {
-        Close(fl->fl_Stream);
-        fl->fl_Stream = 0;
-    }
-}
-
-/* Print the number of frames saved and the first..last file name; print
-   nothing if no frame was saved */
-void uvcPrintSaved(const struct UvcFiles *fl)
-{
-    if(!fl->fl_Saved)
-    {
-        return;
-    }
-
-    UBYTE first[NAME_SIZE];
-
-    fileName(fl, 1, first);
-    Printf("%ld %s saved as %s", fl->fl_Saved, (fl->fl_Saved == 1) ? "frame" : "frames", first);
-    if(!uvcIsStream(fl->fl_FourCC) && (fl->fl_Saved > 1))
-    {
-        UBYTE last[NAME_SIZE];
-
-        fileName(fl, fl->fl_Saved, last);
-        Printf(" ... %s", last);
-    }
-    PutStr("\n");
+    return ((frame[len - 2] == 0xff) && (frame[len - 1] == 0xd9)) ? len : 0;
 }

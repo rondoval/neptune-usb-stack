@@ -1,7 +1,7 @@
 set(SHELLCMDS
     USBStart
-    AddUSBHardware
-    AddUSBClasses
+    USBAddHardware
+    USBAddClasses
     USBList
     USBErrorlog)
 

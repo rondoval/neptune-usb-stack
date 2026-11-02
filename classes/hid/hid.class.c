@@ -138,7 +138,7 @@ int libExpunge(struct NepHidBase * nh)
 
     FreeVec(nh->nh_DummyNCH.nch_CDC);
 
-    KPRINTF(5, ("libExpunge: Unloading done! hid.class expunged!\n\n"));
+    KPRINTF(5, ("libExpunge: Unloading done! hid.usbclass expunged!\n\n"));
 
     return(TRUE);
 }
@@ -225,7 +225,7 @@ struct NepClassHid * usbForceInterfaceBinding(struct NepHidBase *nh, struct PsdI
 
             nLoadBindingConfig(nch, FALSE);
 
-            psdSafeRawDoFmt(buf, 64, "hid.class<%08lx>", nch);
+            psdSafeRawDoFmt(buf, 64, CLASS_NAME "<%08lx>", nch);
             nch->nch_ReadySignal = SIGB_SINGLE;
             nch->nch_ReadySigTask = FindTask(NULL);
             SetSignal(0, SIGF_SINGLE);
@@ -438,7 +438,7 @@ IPTR (usbDoMethodA)(ULONG methodid asm("d0"), IPTR * methoddata asm("a1"), struc
             nch = (struct NepClassHid *) methoddata[0];
             nch->nch_Running = FALSE;
             /* Quiesce the int-IN pipe before SET_SUSPEND(1) parks the rings
-               (mirrors hub.class).  No psdWaitPipe here: this runs in the
+               (mirrors hub.usbclass).  No psdWaitPipe here: this runs in the
                caller's task, the reply lands on the hid task's port and its
                loop reaps it; resume resubmits. */
             if(nch->nch_EPInPipe)
@@ -1162,8 +1162,7 @@ struct NepClassHid * nAllocHid(void)
                        input.device 50.x the same number is another command, and a key sent
                        with it never stops repeating. So it is used only when the device lists
                        it in its NSCMD_DEVICEQUERY answer (nInputHasAddEvent, common.h); otherwise
-                       everything goes with IND_WRITEEVENT, exactly as the boot mouse/keyboard
-                       classes always have, and only the repeat is lost. */
+                       everything goes with IND_WRITEEVENT and at most the repeat is lost. */
                     nch->nch_OS4Hack = nInputHasAddEvent(nch->nch_InpIOReq);
                     nch->nch_ClsBase->nh_OS4Hack = nch->nch_OS4Hack;
                     if(nch->nch_OS4Hack)
@@ -1175,7 +1174,7 @@ struct NepClassHid * nAllocHid(void)
                     } else {
                         psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
                                        "input.device V%ld.%ld has no IND_ADDEVENT, using IND_WRITEEVENT. Keys and "
-                                       "mouse work, but held keys will not auto-repeat.",
+                                       "mouse work, but held keys may not auto-repeat.",
                                        (ULONG) InputBase->lib_Version, (ULONG) InputBase->lib_Revision);
                     }
 
@@ -1273,7 +1272,7 @@ struct NepClassHid * nAllocHid(void)
                             {
                                 struct TagItem usbd_tags[] =
                                 {
-                                    {aHidd_Name,               (IPTR)"hid.class"       },
+                                    {aHidd_Name,               (IPTR)"hid.usbclass"       },
                                     {aHidd_HardwareName,        (IPTR)"USB Human Interface Device"       },
                                     {aHidd_Producer,            0       },
                             #define USBD_TAG_VEND 2
@@ -6558,7 +6557,7 @@ void nSendRawKeyCmd(struct NepClassHid *nch, UWORD key, UWORD cmd)
 /* \\\ */
 
 /* /// "nSendRawKey()" */
-/* A key edge. IND_ADDEVENT on V47 so input.device tracks it (qualifier state,
+/* A key edge. IND_ADDEVENT if it has it, so input.device tracks it (qualifier state,
    auto-repeat until the matching up arrives). nch_LastRawKey is what nCheckReset
    reads: the event itself is destroyed by the DoIO (input.doc). */
 void nSendRawKey(struct NepClassHid *nch, UWORD key)

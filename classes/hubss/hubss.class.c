@@ -12,16 +12,16 @@
 #include <devices/usb.h>
 #include <devices/usb_hub.h>
 #include <devices/usbhardware.h>
-#include <libraries/usbclass.h>
+#include <libraries/neptune_class.h>
 
 #include "common.h"
 #include "hubss.class.h"
 
 /* Cross-class dispatch (evicting the USB2 twin of an SS device via the peer
  * hub's class): only the inline LVO macros - the clib prototype (2 args) would
- * clash with our own 3-argument usbDoMethodA export below. USBCLASS_BASE_NAME
+ * clash with our own 3-argument usbDoMethodA export below. NEPTUNE_CLASS_BASE_NAME
  * defaults to UsbClsBase, a local in nNotifyPeerTwinEvict(). */
-#include <inline/usbclass.h>
+#include <inline/neptune_class.h>
 
 struct NepClassHubSS * usbAttemptDeviceBinding(struct NepHubSSBase *nh, struct PsdDevice *pd);
 struct NepClassHubSS * usbForceDeviceBinding(struct NepHubSSBase * nh, struct PsdDevice *pd);
@@ -113,7 +113,7 @@ struct NepClassHubSS * usbForceDeviceBinding(struct NepHubSSBase * nh, struct Ps
             nch->nch_HubBase = nh;
             nch->nch_Device = pd;
             nch->nch_Settling = TRUE;
-            psdSafeRawDoFmt(buf, 64, "hubss.class<0x%08lx>", nch);
+            psdSafeRawDoFmt(buf, 64, CLASS_NAME "<0x%08lx>", nch);
 
             nch->nch_ReadySignal = SIGB_SINGLE;
             nch->nch_ReadySigTask = FindTask(NULL);
@@ -538,7 +538,7 @@ void nNotifyPeerTwinEvict(struct NepClassHubSS *nch, UWORD port)
 /* 2.0 half only: TRUE when the SS half of the same physical hub already has
  * (or is currently enumerating - hub/port attrs are set before reset) a child
  * on the same connector. The USB2 presence is then just the twin of the SS
- * device and must not be enumerated. (hubss.class is always the SS half, so
+ * device and must not be enumerated. (hubss.usbclass is always the SS half, so
  * this self-gates to FALSE; kept for clone parity with hub.class.) */
 BOOL nPortShadowedByPeer(struct NepClassHubSS *nch, UWORD port)
 {
@@ -1072,22 +1072,22 @@ struct NepClassHubSS * nAllocHub(void) {
                     DA_ContainerId, &containerid,
                     TAG_END);
 
-        /* hubss.class drives the raw USB3 hub protocol and relies on the HCD
+        /* hubss.usbclass drives the raw USB3 hub protocol and relies on the HCD
            owning device addressing (the context lifecycle ABI).  A SuperSpeed
            hub only ever enumerates on a context HCD - on the legacy ABI xhci
-           presents a USB 2.0 hub, bound by hub.class - so a non-context HCD
+           presents a USB 2.0 hub, bound by hub.usbclass - so a non-context HCD
            here is a misconfiguration: refuse the binding rather than run blind. */
         psdGetAttrs(PGA_HARDWARE, nch->nch_Hardware,
                     HA_ContextBackend, &ctxhw,
                     TAG_END);
         if(!ctxhw) {
             psdAddErrorMsg(RETURN_FAIL, (STRPTR) libname,
-                           "hubss.class requires a context-ABI HCD; ignoring SuperSpeed hub.");
+                           CLASS_NAME " requires a context-ABI HCD; ignoring SuperSpeed hub.");
             break;
         }
 
         nch->nch_IsRootHub = (parenthub ? FALSE : TRUE);
-        /* USB3 hub pairing: hubss.class only binds superspeed hubs, so this is
+        /* USB3 hub pairing: hubss.usbclass only binds superspeed hubs, so this is
            always the SS half. An all-zero Container ID (counterfeit hubs) keeps
            pairing disabled for this hub. */
         nch->nch_IsSSHalf = (proto == 3) || issuperspeed;
@@ -1175,7 +1175,7 @@ struct NepClassHubSS * nAllocHub(void) {
                                         /* An external hub owes a device at least 100ms
                                            after port power, whatever its descriptor says;
                                            a root hub is the host controller driver and is
-                                           taken at its word (see hub.class). */
+                                           taken at its word (see hub.usbclass). */
                                         if(!nch->nch_IsRootHub && (nch->nch_PwrGoodTime < 100)) {
                                             nch->nch_PwrGoodTime = 100;
                                         }

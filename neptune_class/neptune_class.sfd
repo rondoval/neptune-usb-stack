@@ -1,8 +1,8 @@
-==id $Id: usbclass.sfd 1.1 $
-* "usbclass.library"
+==id $Id: neptune_class.sfd 1.1 $
+* "neptune_class.library" - nominal: Neptune's class-driver LVOs, implemented by every class
 ==base _UsbClsBase
 ==basetype struct Library *
-==libname usbclass.library
+==libname neptune_class.library
 ==bias 30
 ==public
 ==include <exec/types.h>
@@ -14,7 +14,7 @@
 ==include <utility/utility.h>
 ==include <devices/timer.h>
 ==include <libraries/neptune.h>
-==include <libraries/usbclass.h>
+==include <libraries/neptune_class.h>
 LONG usbGetAttrsA(ULONG type, APTR usbstruct, struct TagItem *taglist) (D0,A0,A1)
 ==varargs
 LONG usbGetAttrs(ULONG type, APTR usbstruct, Tag tag1, ...) (D0,A0,A1)

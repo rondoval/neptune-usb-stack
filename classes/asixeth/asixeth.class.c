@@ -29,6 +29,11 @@ int libInit(struct NepEthBase * nh)
     struct NepClassEth *ncp;
     struct NepEthBase *ret = NULL;
 
+    if(nDevNameTaken(DEVNAME))
+    {
+        return FALSE;
+    }
+
     KPRINTF(10, ("libInit nh: 0x%08lx SysBase: 0x%08lx\n", nh, EXEC_BASE_NAME));
 
     nh->nh_UtilityBase = OpenLibrary("utility.library", 39);
@@ -101,7 +106,7 @@ int libExpunge(struct NepEthBase * nh)
         nh->nh_DevBase->np_Library.lib_OpenCnt--;
         RemDevice((struct Device *) nh->nh_DevBase);
 
-        KPRINTF(5, ("libExpunge: Unloading done! asixeth.class expunged!\n\n"));
+        KPRINTF(5, ("libExpunge: Unloading done! asixeth.usbclass expunged!\n\n"));
     } else {
         KPRINTF(5, ("libExpunge: Could not expunge, LIBF_DELEXP set!\n"));
         return(FALSE);
@@ -294,7 +299,7 @@ struct NepClassEth * usbForceDeviceBinding(struct NepEthBase *nh, struct PsdDevi
         ncp->ncp_UnitNo = unitno;
         Permit();
 
-        psdSafeRawDoFmt(buf, 64, "asixeth.class<%08lx>", ncp);
+        psdSafeRawDoFmt(buf, 64, CLASS_NAME "<%08lx>", ncp);
         ncp->ncp_ReadySignal = SIGB_SINGLE;
         ncp->ncp_ReadySigTask = FindTask(NULL);
         SetSignal(0, SIGF_SINGLE);
@@ -1606,17 +1611,6 @@ void nDoEvent(struct NepClassEth *ncp, ULONG events)
 /* \\\ */
 
 /* /// "support routines" */
-static
-inline void *callcopy(void *routine,
-                      void *from,
-                      void *to,
-                      ULONG len)
-{
-  void * (*call) (APTR, APTR, ULONG) = routine;
-
-  return (*call) (from, to, len);
-}
-
 #define callfilter CallHookPkt
 /* \\\ */
 
@@ -1667,7 +1661,7 @@ BOOL nWritePacket(struct NepClassEth *ncp, struct IOSana2Req *ioreq)
     //memset(buf + 2, 0x55, writelen);
 
     /* Dma not available, fallback to regular copy */
-    if(callcopy(bufman->bm_CopyFromBuf, copydest, ioreq->ios2_Data, ioreq->ios2_DataLength) == NULL)
+    if(!nCallS2Copy(bufman->bm_CopyFromBuf, copydest, ioreq->ios2_Data, ioreq->ios2_DataLength))
     {
         KPRINTF(10, ("writepacket: copyfrom returned failure!\n"));
 
@@ -1680,6 +1674,7 @@ BOOL nWritePacket(struct NepClassEth *ncp, struct IOSana2Req *ioreq)
         ioreq->ios2_DataLength   = 0;
         ioreq->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
         ioreq->ios2_WireError    = S2WERR_BUFF_ERROR;
+        ReplyMsg((struct Message *) ioreq);
         return FALSE;
     }
 
@@ -1803,8 +1798,8 @@ UWORD nReadIOReq(struct NepClassEth *ncp, struct EtherPacketHeader *eph, UWORD d
     }
 
     /* Finally copy the packet data! */
-    if(callcopy(((struct BufMan *) ioreq->ios2_BufferManagement)->bm_CopyToBuf,
-               ioreq->ios2_Data, copyfrom, ioreq->ios2_DataLength))
+    if(nCallS2Copy(((struct BufMan *) ioreq->ios2_BufferManagement)->bm_CopyToBuf,
+                   ioreq->ios2_Data, copyfrom, ioreq->ios2_DataLength))
     {
         DB(
         KPRINTF(5, ("readioreq: copytobuffed packet ior 0x%08lx, %04lx%08lx < %04lx%08lx, type %lu, %lu bytes, %s%s%s\n",
@@ -2031,7 +2026,7 @@ void nGUITask()
         MUIA_Application_Version    , (IPTR)VERSION_STRING,
         MUIA_Application_Copyright  , (IPTR)"(C) 2007-2009 Harry Sintonen & Chris Hodges",
         MUIA_Application_Author     , (IPTR)"Harry Sintonen <sintonen@iki.fi> & Chris Hodges <chrisly@platon42.de>",
-        MUIA_Application_Description, (IPTR)"Settings for the asixeth.class",
+        MUIA_Application_Description, (IPTR)"Settings for the " CLASS_NAME,
         MUIA_Application_Base       , (IPTR)"ASIXETH",
         MUIA_Application_HelpFile   , (IPTR)"HELP:Neptune.guide",
         MUIA_Application_Menustrip  , (IPTR)MenustripObject,

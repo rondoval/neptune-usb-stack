@@ -2,9 +2,9 @@
 ** USBStart starts the stack: it is the one command the startup needs.
 **
 ** What should run comes from ENVARC:Sys/neptune.prefs (on first start, imported
-** from poseidon.prefs and saved). Where the prefs say nothing, defaults stand in:
+** from a 6.0-6.2 poseidon.prefs and saved). Where the prefs say nothing, defaults stand in:
 ** every class in DEVS:USBClasses, and the host controller named on the command
-** line. AddUSBClasses and AddUSBHardware do those two jobs by hand; they are not
+** line. USBAddClasses and USBAddHardware do those two jobs by hand; they are not
 ** needed at startup.
 **
 ** Based on Poseidon's PsdStackLoader by Chris Hodges <chrisly@platon42.de>.
@@ -20,6 +20,7 @@
 #include <proto/dos.h>
 #include <neptune_version.h>
 #include <classdir.h>
+#include <nep_otherstack.h>
 
 #define ARGS_DEVICE   0
 #define ARGS_UNIT     1
@@ -57,6 +58,18 @@ int main(void)
 
     if((ps = OpenLibrary(NEPTUNENAME, NEPTUNE_LIB_MIN_VERSION)))
     {
+        UWORD other = nepPoseidonLoaded();
+        if(other)
+        {
+            /* The startup line runs >NIL:, so the stack log is where this is read.
+               RETURN_WARN: below the default FailAt, the rest of the startup runs. */
+            psdAddErrorMsg(RETURN_ERROR, "USBStart", NEP_OTHERSTACK_TXT, (LONG) other);
+            Printf(NEP_OTHERSTACK_TXT "\n", (LONG) other);
+            CloseLibrary(ps);
+            FreeArgs(ArgsHook);
+            return RETURN_WARN;
+        }
+
         /* No prefs file is not an error: the defaults below cover it. */
         psdLoadCfgFromDisk(NULL);
 
@@ -98,7 +111,7 @@ int main(void)
 
         /* Applies what the prefs list and ends in the class scan. That scan is
            the first one from a process, which is what hands the keyboard and
-           mouse of a ROM-started stack over from the boot classes to hid.class
+           mouse of a ROM-started stack over from the boot classes to hid.usbclass
            - so the classes have to be loaded before this point. */
         psdParseCfg();
 

@@ -33,7 +33,7 @@
 
 #include <devices/usb.h>
 #include <devices/usbhardware.h>
-#include <libraries/usbclass.h>
+#include <libraries/neptune_class.h>
 
 #include <string.h>
 #include <stddef.h>
@@ -76,26 +76,26 @@ static inline void nApplyInputTaskPriFloor(void)
     }
 }
 
-/* TRUE if the input.device behind ioreq (just opened, idle) implements
-   IND_ADDEVENT, the V47 (AmigaOS 3.2) command. Asks the device itself with
-   NSCMD_DEVICEQUERY instead of trusting lib_Version alone: the 68k
-   input.device 50.x is V50 but does not answer the query, and its command
-   24 (CMD_NONSTD+15) is a different function - fed key events with it, a key
-   repeats for ever. The 3.2 input.device (47.1) answers and lists 24.
-   Below V47 the query is not even sent. Leaves io_Command/io_Data/io_Length
-   changed; every sender sets all three before its DoIO. */
+/**
+ * nInputHasAddEvent() - Test whether input.device implements IND_ADDEVENT.
+ * @ioreq: request on the opened device, idle. Its io_Command, io_Data and io_Length
+ *         are left changed; every sender sets all three before its DoIO().
+ *
+ * Asks NSCMD_DEVICEQUERY rather than trusting lib_Version: the 68k input.device 50.x
+ * is V50 but rejects the query, and its command 24 (CMD_NONSTD+15) is another function
+ * with which a key repeats for ever. Below V47 the query is not sent.
+ *
+ * Return: TRUE if the device lists IND_ADDEVENT.
+ */
 static inline BOOL nInputHasAddEvent(struct IOStdReq *ioreq)
 {
-    struct NSDeviceQueryResult nsdq;
-    UWORD *cmd;
-
     if(ioreq->io_Device->dd_Library.lib_Version < 47)
     {
-        return(FALSE);
+        return FALSE;
     }
-    nsdq.nsdqr_DevQueryFormat = 0;
-    nsdq.nsdqr_SizeAvailable = 0;
-    nsdq.nsdqr_SupportedCommands = NULL;
+
+    struct NSDeviceQueryResult nsdq = { 0 };
+
     ioreq->io_Command = NSCMD_DEVICEQUERY;
     ioreq->io_Data = &nsdq;
     ioreq->io_Length = sizeof(nsdq);
@@ -103,16 +103,52 @@ static inline BOOL nInputHasAddEvent(struct IOStdReq *ioreq)
     if(DoIO((struct IORequest *) ioreq) || (ioreq->io_Actual < sizeof(nsdq)) ||
        (nsdq.nsdqr_SizeAvailable < sizeof(nsdq)) || !nsdq.nsdqr_SupportedCommands)
     {
-        return(FALSE);
+        return FALSE;
     }
-    for(cmd = (UWORD *) nsdq.nsdqr_SupportedCommands; *cmd; cmd++)
+    for(const UWORD *cmd = nsdq.nsdqr_SupportedCommands; *cmd; cmd++)
     {
         if(*cmd == IND_ADDEVENT)
         {
-            return(TRUE);
+            return TRUE;
         }
     }
-    return(FALSE);
+    return FALSE;
+}
+
+/* SANA-II buffer management copy hook (S2_CopyToBuff/S2_CopyFromBuff):
+ * a0 = to, a1 = from, d0 = length; returns a 16-bit BOOL. */
+typedef BOOL (*S2CopyBuffFunc)(APTR to asm("a0"), APTR from asm("a1"), ULONG len asm("d0"));
+
+static inline BOOL nCallS2Copy(APTR func, APTR to, APTR from, ULONG len)
+{
+    return ((S2CopyBuffFunc) func)(to, from, len);
+}
+
+/* TRUE if exec's device list already holds name - another USB stack's device of that
+ * name, or a second copy of this class - logged as why the class does not start.
+ * First thing in libInit(), before anything is allocated, so a FALSE return has
+ * nothing to unwind. The log needs neptune.library already in memory: libInit()
+ * runs in ramlib's context when a class loads from disk, where an OpenLibrary()
+ * that has to load would deadlock.
+ */
+static inline BOOL nDevNameTaken(CONST_STRPTR name)
+{
+    Forbid();
+    BOOL taken = (FindName(&EXEC_BASE_NAME->DeviceList, name) != NULL);
+    BOOL haveps = taken && (FindName(&EXEC_BASE_NAME->LibList, NEPTUNENAME) != NULL);
+    Permit();
+    if(haveps)
+    {
+        struct Library *ps = OpenLibrary(NEPTUNENAME, NEPTUNE_LIB_MIN_VERSION);
+        if(ps)
+        {
+            psdAddErrorMsg(RETURN_ERROR, (STRPTR) CLASS_NAME,
+                           "%s is already provided by another USB stack; %s does not start.",
+                           (STRPTR) name, (STRPTR) CLASS_NAME);
+            CloseLibrary(ps);
+        }
+    }
+    return taken;
 }
 
 /* Log wordings shared by every class driver. */

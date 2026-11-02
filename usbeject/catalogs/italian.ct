@@ -31,8 +31,8 @@ Impossibile espellere '%s':\n%s è ancora in uso.\nChiudere tutti i file su di es
 ; Cannot eject '%s':\n%s is still in use.\nClose all files on it and try again.
 ;
 MSG_REQ_TOOOLD
-Impossibile espellere '%s':\nla massstorage.class installata è troppo vecchia\nper l'espulsione sicura - aggiornarla.
-; Cannot eject '%s':\nthe installed massstorage.class is too old\nfor safe eject - please update it.
+Impossibile espellere '%s':\nla massstorage.usbclass installata è troppo vecchia\nper l'espulsione sicura - aggiornarla.
+; Cannot eject '%s':\nthe installed massstorage.usbclass is too old\nfor safe eject - please update it.
 ;
 MSG_REQ_FAILED
 Espulsione di '%s' non riuscita.\nVedere il registro errori di Neptune (Neptune USB).

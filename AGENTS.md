@@ -10,8 +10,9 @@ The version is `project(VERSION)` in the top-level `CMakeLists.txt` and nowhere 
 
 It is a **matched pair** with `xhci.device` in the `emu68-driver-stack` checkout
 (`components/emu68-xhci-driver-context/`): cross-ABI changes land in both, and the vendored
-`usbhcd_*.h` copies there stay byte-identical to `include/devices/`. Don't edit the frozen
-`emu68-xhci-driver-legacy/` for stack work.
+`usbhcd_*.h` copies there stay byte-identical to `include/devices/`. The 5.x line,
+`emu68-xhci-driver-legacy/` (`xhci-legacy.device`), is not part of that pair; don't touch it for
+stack work.
 
 AROS baseline: `AROS-BASELINE`, extraction tagged `aros-extract-base`.
 
@@ -46,7 +47,7 @@ Build traps:
 | `neptune.library/` | The stack core |
 | `classes/` | The `*.class` drivers (shared skeleton `class_main.c`, `common.h`) |
 | `neptuneusb/` | Neptune USB, the MUI prefs editor |
-| `c/`, `tools/`, `usbeject/`, `vhi/` | CLI commands, gadget tools, USBEject, `usbvideo.vhi` |
+| `c/`, `tools/`, `usbeject/`, `vhi/` | CLI commands, gadget tools, USBEject, `neptune.vhi` |
 | `romstartup/` | Kickstart-ROM startup resident; `scripts/build-kickstart.py` builds the image |
 | `include/` | Public headers; on-disk names and the Poseidon-prefs migration names in `nep_paths.h` |
 | `dist/`, `presets/` | Installer, icons, ReadMe template, sounds |
@@ -63,14 +64,15 @@ Open work lives in `docs/implementation-plan.md` only.
 - **The legacy HCD ABI is frozen.** `IOUsbHWReq` V1+V2 layout and all `UHCMD_*`/`UHIOERR_*`/
   `UHFB_*`/`UHCF_*` values are binary contract with classic HCDs. Neptune does not implement
   Poseidon's V3 interface; new HCD capabilities go into the context ABI, never into the request.
-- **Settings file format is fixed:** the IFF IDs (`PSDC`, `STKC`, …) stay, and
-  `struct PsdGlobalCfg` is the raw `GCFG` chunk - append-only, retired fields keep their slot.
+- **Settings file format is fixed:** the outer form is Neptune's `NEPC`; a `PSDC` file (6.0-6.2,
+  but also classic 4.x) loads only with 6.x's `GCFG` length. The other IFF IDs (`STKC`, …) stay,
+  and `struct PsdGlobalCfg` is the raw `GCFG` chunk - append-only, retired fields keep their slot.
 - **Catalogs:** a `MSG_*` number is both the catalog id and the `CatCompArray` index; adding,
   removing or reordering messages needs a `CATALOG_VERSION` bump. `.ct` files are ISO-8859 or
   cp1251 - use `grep -a`.
 - The class scan must not wire-switch alternates while probing, and endpoint-recipient class
   requests carry the full endpoint address in `wIndex`.
-- The address-0 enumeration lock is `hub.class`-local (`nh_Adr0Sema`, held across all of
+- The address-0 enumeration lock is `hub.usbclass`-local (`nh_Adr0Sema`, held across all of
   `nConfigurePort`). Don't reintroduce a stack-wide one or narrow it.
 
 ## Source conventions

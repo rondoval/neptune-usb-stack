@@ -55,7 +55,7 @@
 #include <devices/usb_massstorage.h>
 #include <devices/usbhardware.h>
 #include <devices/usbhcd_context.h>    /* the context HCD ABI (lifecycle ops) */
-#include <libraries/usbclass.h>
+#include <libraries/neptune_class.h>
 
 /* Internal calls to our own LVO functions go through the inline stubs with the
    libbase = the in-scope `ps` parameter (every LVO function has it in a6). The
@@ -117,6 +117,9 @@ void pClassScan(struct PsdBase *ps);
 void pReleaseBinding(struct PsdBase *ps, struct PsdDevice *pd, struct PsdInterface *pif);
 void pReleaseDevBinding(struct PsdBase *ps, struct PsdDevice *pd);
 void pReleaseIfBinding(struct PsdBase *ps, struct PsdInterface *pif);
+
+BOOL pIsDeviceStillValid(struct PsdBase *ps, struct PsdDevice *pd);
+BOOL pIsClassStillValid(struct PsdBase *ps, struct Library *ucb);
 
 void pGarbageCollectEvents(struct PsdBase *ps);
 BOOL pStartEventHandler(struct PsdBase *ps);

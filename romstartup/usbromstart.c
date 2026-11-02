@@ -33,7 +33,7 @@
 #include <dos/dos.h>                    /* RETURN_OK, for the psdAddErrorMsg log */
 #include <utility/tagitem.h>
 #include <libraries/expansionbase.h>
-#include <libraries/usbclass.h>
+#include <libraries/neptune_class.h>
 #include <devices/timer.h>
 
 #include <string.h>
@@ -45,9 +45,10 @@
    UsbClsBase - the names the inlines default to), because a ROM module may not
    carry a writable global to hold one. */
 #include <proto/timer.h>
-#include <inline/usbclass.h>
+#include <inline/neptune_class.h>
 
 #include <neptune_version.h>
+#include <nep_otherstack.h>
 #include "debug.h"
 
 /* This is only the compile-time default (cmake -DROMSTART_HCD=<name>); the slot
@@ -127,7 +128,7 @@ const struct Resident romTag __attribute__((used, section(".text.modhdr"))) = {
 
 /* Keyboard and mouse.
  *
- * hid.class is tried first and is expected to fail in the shipping ROM.
+ * hid.usbclass is tried first and is expected to fail in the shipping ROM.
  * The two boot-protocol classes cover keyboard and mouse until USBStart
  * runs from the startup-sequence. Its class scan is the first one from a
  * process, and that is what runs the AfterDOS pass: it releases the boot
@@ -138,12 +139,12 @@ const struct Resident romTag __attribute__((used, section(".text.modhdr"))) = {
  */
 static void addInputClasses(struct Library *ps, CONST_STRPTR origin)
 {
-    if(psdAddClass("hid.class", 0))
+    if(psdAddClass("hid.usbclass", 0))
     {
-        psdAddErrorMsg(RETURN_OK, (STRPTR)origin, "Added hid.class from ROM.");
+        psdAddErrorMsg(RETURN_OK, (STRPTR)origin, "Added hid.usbclass from ROM.");
     } else {
-        psdAddClass("bootmouse.class", 0);
-        psdAddClass("bootkeyboard.class", 0);
+        psdAddClass("bootmouse.usbclass", 0);
+        psdAddClass("bootkeyboard.usbclass", 0);
         psdAddErrorMsg(RETURN_OK, (STRPTR)origin,
                        "Added boot mouse/keyboard classes from ROM.");
     }
@@ -439,9 +440,18 @@ static ULONG initUsbRom(ULONG            dummy   asm("d0"),
         return 0;
     }
 
-    APTR hubclass   = psdAddClass("hub.class", 0);
-    APTR hubssclass = psdAddClass("hubss.class", 0);
-    APTR msdclass   = psdAddClass("massstorage.class", 0);
+    /* Before DOS only a ROM-resident Poseidon can be in the list. */
+    UWORD other = nepPoseidonLoaded();
+    if(other)
+    {
+        psdAddErrorMsg(RETURN_ERROR, (STRPTR)origin, NEP_OTHERSTACK_TXT, (LONG)other);
+        CloseLibrary(ps);
+        return 0;
+    }
+
+    APTR hubclass   = psdAddClass("hub.usbclass", 0);
+    APTR hubssclass = psdAddClass("hubss.usbclass", 0);
+    APTR msdclass   = psdAddClass("massstorage.usbclass", 0);
     addInputClasses(ps, origin);
 
     ULONG units = addHardware(ps, origin);
@@ -457,10 +467,6 @@ static ULONG initUsbRom(ULONG            dummy   asm("d0"),
         waitForBootDevices(ps, msdclass, hubclass, hubssclass, origin);
     }
 
-    /* No CloseLibrary(ps): the ROM-resident stack keeps this reference for good.
-       psdClassScan() has started the event handler and notification tasks, and with
-       no device bound nothing else holds the library open; at lib_OpenCnt 0 a memory
-       flush (Avail FLUSH) runs LibExpunge, which Wait()s for those tasks inside
-       Expunge (breaking the Forbid() exec holds there) and then frees the base. */
+    CloseLibrary(ps);
     return 0;
 }

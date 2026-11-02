@@ -3,7 +3,7 @@
  * reused by every Neptune *.class. Hand-written replacement for AROS genmodule.
  *
  * Parameterised per class via -D (see each class's CMakeLists):
- *   CLASS_NAME           "hub.class"            -- the resident/library name
+ *   CLASS_NAME           "hub.usbclass"            -- the resident/library name
  *   CLASS_PRI            -45                     -- romtag rt_Pri (NEP_CLASS_PRI)
  *   CLASS_BASETYPE_NAME  NepHubBase              -- struct tag of the libbase
  *   CLASS_INCLUDE        "hub.h"                 -- header defining that struct
@@ -61,7 +61,7 @@ extern LONG usbDoMethodA(ULONG methodid asm("d0"), IPTR *methoddata asm("a1"),
                          CLASS_BASE *nh asm("a6"));
 
 /* Optional per-class extra library vectors beyond the usbclass ABI. A class that
-   exports its own functions (e.g. camdusbmidi.class's usbCAMDOpenPort/ClosePort)
+   exports its own functions (e.g. camdusbmidi.usbclass's usbCAMDOpenPort/ClosePort)
    provides a header via -DCLASS_VECTORS_HDR="..." that declares them (address-only,
    like the usbclass externs above) and #defines CLASS_EXTRA_VECTORS to the funcTable
    entries (reserved slots use the LibNull below). Absent for every other class. */

@@ -8,7 +8,7 @@
 >
 > Sources: `neptune.library/` (`neptune.library.c`, `neptune_intern.h`, `neptune_main.c`,
 > `neptune.sfd`, `notify.gui.c`, `numtostr.c`); public headers `include/libraries/neptune.h`,
-> `include/libraries/usbclass.h`, `include/devices/usbhcd_common.h`, `usbhardware.h`,
+> `include/libraries/neptune_class.h`, `include/devices/usbhcd_common.h`, `usbhardware.h`,
 > `usbhcd_context.h`; on-disk names in `include/nep_paths.h`.
 >
 > This document describes structure, behaviour and the rules that keep it correct. It names
@@ -47,12 +47,12 @@ traffic, do the housekeeping that has to block, and show popups (§4.1).
 flowchart TB
     subgraph APPS["Applications"]
         NUSB["Neptune USB (prefs editor)"]
-        START["USBStart, AddUSBHardware, AddUSBClasses"]
+        START["USBStart, USBAddHardware, USBAddClasses"]
         EJ["USBEject, USB tools"]
     end
     ROM["ROM startup resident"]
     subgraph CLS["Class drivers (*.class)"]
-        HUB["hub.class, hubss.class"]
+        HUB["hub.usbclass, hubss.usbclass"]
         OTH["hid, massstorage, usbaudio, usbvideo, ..."]
     end
     CORE[["neptune.library"]]
@@ -85,7 +85,7 @@ flowchart TB
   clients. It uses DOS to load settings, spawn Processes and load drivers; the notifier uses
   Intuition, MUI and datatypes.
 
-`hub.class` is the one mandatory class. The library enumerates and scans only root hubs; every
+`hub.usbclass` is the one mandatory class. The library enumerates and scans only root hubs; every
 deeper device is found by the hub class bound to its parent and enumerated in that hub's task
 (§5.4). `USBStart` and the ROM startup resident (`romstartup/usbromstart.c`) populate the stack;
 the library adds no USB state on its own (§5.1).
@@ -107,10 +107,10 @@ the library adds no USB state on its own (§5.1).
 | **Locks** | Reader/writer locks with lock borrowing | `PsdLockSem`, `pLockSemExcl`, `pLockSemShared`, `pUnlockSem`, `psdBorrowLocksWait` |
 | **Settings** | IFF tree; load, save, import, apply; class and device settings | `PsdIFFContext`, `psdLoadCfgFromDisk`, `pMigrateCfg`, `psdParseCfg`, `psdSetClsCfg`, `psdSetUsbDevCfg`, `pCheckCfgChanged` |
 | **Events** | Subscriber list and broadcast | `psdAddEventHandler`, `psdSendEvent` |
-| **Event task** | Blocking housekeeping: settings change, link power, stall recovery, idle suspend, notifier start | `pEventHandlerTask`, `pStallRecoverySweep`, `pLinkPowerSweep`, `pIdleSuspendSweep` |
+| **Event task** | Blocking housekeeping: settings change, link power, stall recovery, idle suspend, automatic port recovery, notifier start | `pEventHandlerTask`, `pStallRecoverySweep`, `pLinkPowerSweep`, `pIdleSuspendSweep`, `pAutoRecover` |
 | **Power** | Suspend and resume, link power, power budget | `psdSuspendDevice`, `psdResumeDevice`, `psdSuspendBindings`, `psdResumeBindings`, `pLinkPowerArm`, `pSuspendRefusal`, `psdCalculatePower` |
 | **Device services** | Reset without teardown, safe eject | `psdResetDevice`, `psdSafeEjectDevice` |
-| **Notifier** | Popups, sounds, automatic port recovery of dead and overdrawn devices | `pNotifyGUITask` (`notify.gui.c`) |
+| **Notifier** | Popups and sounds; reports the automatic port recovery | `pNotifyGUITask` (`notify.gui.c`) |
 
 **The device model.** Each controller keeps a **flat** list of all its devices, whatever their
 depth; the tree comes from each device's parent hub and port. A device holds its configurations,
@@ -135,8 +135,8 @@ inactive ones hang off it.
 | Task | Count | Spawned by | Waits on | Does |
 |---|---|---|---|---|
 | **Relay task** `pDeviceTask` | one per HCD unit | `psdAddHardware` | inbound port, completion port, CTRL-C | Opens the HCD, selects the backend, forwards message-framed requests and aborts, routes their replies, flushes at shutdown |
-| **Event task** `pEventHandlerTask` | one | first `libOpen` | event port, a 500 ms timer, CTRL-C | Settings-change detection, the stall-recovery, link power and idle suspend sweeps, starting the notifier |
-| **Notifier** `pNotifyGUITask` | at most one | event task | MUI, event port, timer | Popups, sounds, port recovery (§5.13) |
+| **Event task** `pEventHandlerTask` | one | first `libOpen` | event port, a 500 ms timer, CTRL-C | Settings-change detection, the stall-recovery, link power and idle suspend sweeps, automatic port recovery, starting the notifier |
+| **Notifier** `pNotifyGUITask` | at most one | event task | MUI, event port, timer | Popups, sounds (§5.13) |
 | **Class tasks** | any | classes, via `psdSpawnSubTask` | their own | Hub tasks, binding workers, GUIs |
 | **Caller tasks** | any | - | - | Most of the library: enumeration (in hub tasks), transfers, class scan, settings, suspend |
 
@@ -200,7 +200,16 @@ settings and starts the event task. Neither adds USB state.
 **`USBStart`** loads the settings (§5.12), supplies defaults where they say nothing - every class in
 `DEVS:USBClasses` when no class is listed, the controller named on its command line when none is
 listed or attached - and applies them with `psdParseCfg`. The test is what the settings list, not
-whether a file existed. `AddUSBHardware` and `AddUSBClasses` do the two default jobs by hand.
+whether a file existed. `USBAddHardware` and `USBAddClasses` do the two default jobs by hand.
+
+**One stack at a time.** While `poseidon.library` is in exec's library list, at any version,
+Neptune starts no host controller: `USBStart`, `USBAddHardware` and the ROM resident stop with one
+log line, and `psdParseCfg` and `psdAddHardware` refuse for any other caller
+(`include/nep_otherstack.h`) - two stacks must never drive the same controller. Class drivers are
+not refused: Neptune's are `<name>.usbclass`, Poseidon's `<name>.class`, so ramlib never hands one
+stack the other's, and the class drawer scan (`include/classdir.h`) loads `*.usbclass` only. A
+class that provides an exec device does not start when a device of that name is already in the
+system (`nDevNameTaken()`, `classes/common.h`).
 
 **Apply** (`psdParseCfg`) reconciles the running stack with the settings' stack form: unlisted
 classes and controllers are removed, missing ones added (`psdAddClass`; `psdAddHardware` and
@@ -208,16 +217,16 @@ classes and controllers are removed, missing ones added (`psdAddClass`; `psdAddH
 without a hardware list remove no hardware, settings without a class list remove no class, and an
 in-use ROM class is never removed (rule 15). Before DOS it also waits out the boot delay.
 
-**ROM boot.** The resident adds `hub.class`, `hubss.class`, `massstorage.class` and the input classes
-(`hid.class`, or the boot keyboard and mouse classes), adds and enumerates the controller, runs a
+**ROM boot.** The resident adds `hub.usbclass`, `hubss.usbclass`, `massstorage.usbclass` and the input classes
+(`hid.usbclass`, or the boot keyboard and mouse classes), adds and enumerates the controller, runs a
 class scan - unconditionally, since that scan latches the AfterDOS state below - and then polls
-`UCM_PortsPending` on the hub classes and `UCM_MediaPending` on `massstorage.class` until the hubs
+`UCM_PortsPending` on the hub classes and `UCM_MediaPending` on `massstorage.usbclass` until the hubs
 have settled and no medium is still coming up, within a time cap. It never applies settings.
 
 **AfterDOS.** A class scan from a Task before any settings were read latches `ps_StartedAsTask`. The
 first class scan from a Process clears it and runs `pReleaseAfterDOSBindings`: bindings of classes
 that set `UCCA_AfterDOSRestart` (the boot keyboard and mouse classes) are released so the
-disk-loaded `hid.class` can take the devices, and every class gets `UCM_DOSAvailableEvent`. The
+disk-loaded `hid.usbclass` can take the devices, and every class gets `UCM_DOSAvailableEvent`. The
 pass belongs to the class scan, not to settings, so it runs without a prefs file too; `USBStart`
 loads the disk classes before applying the settings so they exist for that scan.
 
@@ -265,8 +274,12 @@ has allocated, placed (parent, port, speed) and reset, or in `psdEnumerateHardwa
 
 1. the backend addresses the device and reads the first eight descriptor bytes;
 2. the EP0 max packet size is checked against the **link speed**, not `bcdUSB` (low, high and super
-   speed each allow one value; only full speed has a choice), and pushed to the backend;
-3. the full device descriptor; BOS facts (LPM, BESL, U1/U2 exit latencies, container id) when
+   speed each allow one value; only full speed has a choice), and pushed to the backend. A normal
+   root hub has no link: it starts as full speed, so its own value is taken;
+3. the full device descriptor, after which a normal root hub with `bcdUSB` 2.00 or above becomes
+   high speed (hub.usbclass marks full- and low-speed devices below it for split transactions); a
+   full-speed controller's stays full speed, and the SuperSpeed root hub is flagged before
+   enumeration. Then BOS facts (LPM, BESL, U1/U2 exit latencies, container id) when
    `bcdUSB` is above 2.00; the strings, the clone count and `pd_IDString`;
 4. the per-device settings: custom name, popup and power overrides;
 5. every configuration descriptor parsed into the tree;
@@ -324,8 +337,8 @@ Removing a hub stops its task, which frees its children first: a subtree unwinds
 
 | Level | Fields | Example |
 |---|---|---|
-| Device | `pd_DevBinding`, `pd_ClsBinding` | `hub.class` takes the whole device |
-| Interface | `pif_IfBinding`, `pif_ClsBinding` | `hid.class`, `massstorage.class` take one interface each |
+| Device | `pd_DevBinding`, `pd_ClsBinding` | `hub.usbclass` takes the whole device |
+| Interface | `pif_IfBinding`, `pif_ClsBinding` | `hid.usbclass`, `massstorage.usbclass` take one interface each |
 | Application | `pd_DevBinding` with `PDFF_APPBINDING`, no class | a tool claims a device for itself |
 
 A binding is an opaque pointer the class returns, usually its per-instance context; the library
@@ -407,7 +420,8 @@ flowchart TD
   most, NAK timeouts less, CRC, transaction and split errors least, anything else halves the count.
   Past a threshold - lower once the device has an address or descriptor - the device is flagged
   dead and `EHMB_DEVICEDEAD` sent once; the flag clears when the count decays to zero on a connected
-  device. Recovery is the notifier's (§5.13).
+  device. Aborts are not scored: neither the shadow message (`pWaitPipeUnscored`) nor the aborted
+  transfer's `IOERR_ABORTED`. Recovery is the event task's (§5.13).
 - **Abort follows the framing** (rule 4): a shadow message to the relay task, which calls `AbortIO`,
   or the HCD's abort entry for a direct submit. The completion still arrives through the funnel.
 - **Guards.** On a disconnected device `psdDoPipe` returns `UHIOERR_TIMEOUT` after a short delay
@@ -432,7 +446,8 @@ allocation only warns and leaves one ring (rule 16).
 pulls and pushes the data through them on its own clock, without pipes. It needs `UHCF_RT_ISO` and,
 on a context backend, the iso-hook ops, onto which the commands are re-keyed together with the
 handler's flags such as `RTA_ReportInErrors` (ABI doc §10.3). A running stream holds the device
-busy from `psdStartRTIso` to `psdStopRTIso`, since its data never passes a pipe that could stamp
+busy from `psdStartRTIso` to `psdStopRTIso`, or to `psdFreeRTIsoHandler` if it was never stopped -
+one hold per stream (`prt_Running`) - since its data never passes a pipe that could stamp
 activity. On unplug each handler's release hook runs before the bindings are released.
 
 ### 5.8 Stall recovery
@@ -462,17 +477,39 @@ flowchart TD
     R -->|"context HCD without SET_SUSPEND, or parent hub without a class"| NO["refuse, nothing touched"]
     R -->|"no"| B["psdSuspendBindings: UCM_AttemptSuspendDevice on every binding"]
     B -->|"refused"| RB
-    B -->|"agreed"| Q["arm remote wake (non-root), context: SET_SUSPEND(1) quiesces the rings"]
+    B -->|"agreed"| W["arm remote wake (non-root)"]
+    W --> M{"mark pd_Suspending, then: busy IO?"}
+    M -->|"yes: a transfer started"| RB
+    M -->|"no"| Q["context: SET_SUSPEND(1) quiesces the rings"]
     Q --> P{"root device?"}
     P -->|"no"| HUB["UCM_HubSuspendDevice: the hub task parks the port, sets the flag"]
     P -->|"yes"| ROOT["the library sets the flag, EHMB_DEVSUSPENDED"]
-    HUB -->|"failed"| RB["rollback: UCM_HubResumeDevice if the hub is still there, psdResumeBindings"]
+    HUB -->|"failed"| RB["rollback: UCM_HubResumeDevice if the park was tried and the hub is still there, psdResumeBindings"]
     Q -->|"failed"| RB
 ```
 
 - **Bindings.** A class that supports suspend may say no. A class that does not is passed over when
   no IO is in flight, otherwise the suspend is refused - unless `pgc_ForceSuspend` is on and the
   device can remote-wake, in which case the binding is released. An app binding is treated the same.
+- **Transfers that start meanwhile.** The bindings answer for the IO running when they are asked,
+  and psdDoPipe wakes only a device whose flag is set, which the hub class does last. So a transfer
+  starting in between would reach a ring about to be quiesced and wait there for a resume nobody
+  asks for. The two sides are ordered against each other (`pTransferBegin`): a transfer counts
+  itself busy before it reads the device's state, and the suspend raises `pd_Suspending` before it
+  reads the busy count. A transfer counted there calls the suspend off ("Not suspending ...: a
+  transfer started", no error); one that sees the mark leaves `pd_WakeWanted`, and the suspend wakes
+  the device the moment it is parked and returns FALSE, so a hub suspending its ports does not park
+  itself above a device that is awake. Of the state, the transfer reads the mark before the flag:
+  the suspend sets the flag before it lowers the mark, so a suspend that ends between the two reads
+  still leaves the flag to be seen. Compiler barriers keep these orders: there is one CPU, and a
+  task switch comes only between instructions. The mark goes up after the remote-wake arming, whose
+  own transfers would otherwise count, and after the bindings, so a hub's suspend of its children,
+  which runs on the hub's EP0, does not trip it. A device found suspended is woken with the transfer
+  uncounted, then counted again: a hub's resume unparks its ports over the same EP0 pipe, and each
+  of those transfers pairs its own count. Interrupt transfers are not counted: a listener parked
+  across a suspend is meant to be, and a synchronous one started before the mark ends at its NAK
+  timeout, if its pipe has one. A stream start (`psdStartRTIso`) is a transfer here; the other
+  RT-ISO commands are not.
 - **Rollback** undoes a half suspend - bindings stopped and rings quiesced while the flag is clear -
   which nothing else would ever recover: auto-resume keys off the flag and the idle sweep has
   written the device off. It runs outside the device lock (rule 10).
@@ -546,7 +583,7 @@ answer busy with a reason. Only if all agree does it disable the parent port; th
 
 ```mermaid
 flowchart TD
-    ROOT["FORM PSDC"] --> STKC["FORM STKC - stack: GCFG, INSF, RMSF"]
+    ROOT["FORM NEPC"] --> STKC["FORM STKC - stack: GCFG, INSF, RMSF"]
     ROOT --> CLSC["FORM CLSC (n) - class: OWNR, FORM GCPD"]
     ROOT --> DEVC["FORM DEVC (n) - device: DVID, FBND"]
     STKC --> UHWD["FORM UHWD (n) - controller: NAME, UNIT, OFFL"]
@@ -561,12 +598,19 @@ flowchart TD
   `psdGetCfgChunk` (an allocated copy) or `psdWriteCfg`. Neptune USB keeps the custom name and the
   popup and power chunk in the device data it owns.
 - **Load** (`psdLoadCfgFromDisk(NULL)`) tries `ENV:Sys/neptune.prefs`, then `ENVARC:`, then the same
-  pair of `poseidon.prefs`. A Poseidon file is saved straight back as `neptune.prefs`, so the import
-  happens once; `poseidon.prefs` is never written. Each file replaces the tree, passes through
+  pair of `poseidon.prefs`. Neptune's files are `FORM NEPC`; 6.0-6.2 and the classic 4.x line both
+  wrote `FORM PSDC`, so `pReadCfgFile` takes a `PSDC` file only with 6.x's `GCFG` length (50 bytes;
+  4.5 writes 54). A classic file is that stack's own: Neptune starts with defaults, and a file
+  loaded by name is refused the same way. A Poseidon file is saved straight back as
+  `neptune.prefs`, so the import happens once; `poseidon.prefs` is never written. Each file
+  replaces the tree (a `PSDC` one takes Neptune's form type on the way, in `pApplyCfg`), passes through
   `pMigrateCfg`, which rewrites Poseidon's names - class drawer, sound drawer, the prefs editor's
-  owner key - to Neptune's (`nep_paths.h`), and is applied (§5.1). A load that migrated anything
-  is marked unsaved, since no file holds that tree yet. `psdAddCfgEntry` migrates too. Migration
-  is idempotent and keeps no state.
+  owner key - to Neptune's (`nep_paths.h`), and is applied (§5.1). The default load saves a file
+  that migrated anything straight back, like an import, so the conversion happens once (a mark
+  alone would not last: `psdParseCfg`, which `USBStart` and Neptune USB call again after the load,
+  records the applied config as saved). A file loaded by name is only marked unsaved, since no
+  file holds that tree yet. `psdAddCfgEntry` migrates too. Migration is idempotent and keeps no
+  state.
 - **Save** (`psdSaveCfgToDisk(NULL)`) writes the live global settings into `GCFG`, then `ENVARC:`
   and `ENV:`.
 - **Change detection.** Changes raise a check request or check at once (`pCheckCfgChanged`): a
@@ -581,17 +625,29 @@ flowchart TD
 
 **Events.** A subscriber registers a port and a mask (`psdAddEventHandler`); `psdSendEvent` puts a
 note to each matching port. Replies go to a `PA_IGNORE` port and are freed lazily at the next send.
-The fifteen event types cover hardware, devices, classes, bindings and error messages being added
-or removed, settings changes, and a device turning dead, low-power, suspended or resumed. The
-hardware- and class-removal events are sent after the object is freed: their parameter is an
-address for identity only.
+The sixteen event types cover hardware, devices, classes, bindings and error messages being added
+or removed, settings changes, a device turning dead, low-power, suspended or resumed, and the
+stack's handling of a dead or overdrawn one (`EHMB_DEVRECOVERY`). The
+hardware-, device- and class-removal events are sent just before the object is freed, so it is
+gone by the time a note is read: their parameter is an address for identity only (`neptune.h`).
+
+**Automatic recovery** runs in the event task, on `EHMB_DEVICEDEAD` and `EHMB_DEVICELOWPW`, so it
+works with popups off, before Workbench and on a ROM boot (`pAutoRecover`). A dead device with
+`pgc_AutoRestartDead` has its port power-cycled (`UCM_HubPowerCyclePort` to the parent hub's class);
+otherwise `pgc_AutoDisableDead` and `pgc_AutoDisableLP` disable the port (`UCM_HubDisablePort`). A
+root hub has no port and is left alone (`pAutoRecoverAction`). Every such device then gets one
+`EHMB_DEVRECOVERY` note with the outcome - `EHRA_POWERCYCLE`, `EHRA_DISABLE`, or `EHRA_NONE` when
+nothing was done - the state and the product name, copied into the note (`struct PsdDevRecovery`,
+valid until the note is replied; `pSendEventWithData`). All of it runs under the PBase read lock, which
+`psdFreeDevice` needs for writing, so the device stays valid meanwhile and the note is queued before
+the hub task can free it; the device parameter is for identity only.
 
 **The notifier** runs when at least one popup kind is enabled and a Workbench screen exists; it
 needs MUI and datatypes, and exits when the last popup kind is switched off. It shows popups with
-per-device actions, plays the attach and detach sounds, and runs the **automatic recovery**: a dead
-device with `pgc_AutoRestartDead` has its port power-cycled (`UCM_HubPowerCyclePort` to the parent
-hub's class); otherwise `pgc_AutoDisableDead` and `pgc_AutoDisableLP` disable the port
-(`UCM_HubDisablePort`). This policy lives in the GUI task, not in the core (rule 17).
+per-device actions and plays the attach and detach sounds. It takes dead and overdrawn devices
+from `EHMB_DEVRECOVERY` alone, so each gets one popup, built from the note: a recovered device's
+says what was done, has no port buttons and outlives the device; one left alone offers Disable
+and Power-cycle Port, if it has a port.
 
 ### 5.14 Teardown
 
@@ -603,8 +659,9 @@ hub's class); otherwise `pgc_AutoDisableDead` and `pgc_AutoDisableLP` disable th
   hook.
 - **`psdRemClass`** unlinks the class, releases its bindings, and closes the library only if its use
   count reached zero; otherwise it leaks the class rather than close a library still in use.
-- **`libExpunge`** removes hardware, classes, log and settings, stops the notifier and the event
-  task, and frees the pools.
+- **`libExpunge`** refuses while the event task or the notifier runs (rule 19), so the library
+  stays until reset once opened. If the event task never started, it removes hardware, classes,
+  log and settings and frees the pools.
 
 ---
 
@@ -668,11 +725,15 @@ Each rule exists because breaking it caused, or would cause, a real failure.
     tokens and stream counts, or the next allocation trusts phantom rings. Link power disarm
     withholds the capability facts as well as the enables, because the HCD evaluates LTM and USB 2
     hardware LPM from the facts alone.
-17. **The core flags; it does not heal.** Dead and low-power devices are flagged and announced; port
-    recovery happens only while the notifier runs. Shutdown likewise gives up rather than hang: the
-    relay drain and the removal of devices with open pipes both end after a bounded wait.
+17. **The core flags and heals by policy; the notifier only reports.** Dead and low-power devices
+    are flagged and announced, and the event task applies the configured port recovery whether or
+    not the notifier runs. Shutdown gives up rather than hang: the relay drain and the removal of
+    devices with open pipes both end after a bounded wait.
 18. **The custom lock wakes every waiter on every full release.** A waiter may already hold a shared
     lock on the same lock; waking only at count zero hangs it.
+19. **Expunge never waits.** Exec calls it under `Forbid()`, and stopping the library's own tasks
+    takes a `Wait()`; doing that hung or reset the machine on `Avail FLUSH`. So `libExpunge` refuses
+    while they run, and its result counts.
 
 ---
 

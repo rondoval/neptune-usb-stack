@@ -76,9 +76,8 @@ struct NepClassHid
     struct MsgPort     *nch_InpMsgPort;   /* input.device MsgPort */
     struct IOStdReq    *nch_InpIOReq;     /* input.device IORequest */
     struct InputEvent   nch_FakeEvent;    /* Input Event */
-    struct Library     *nch_InputBase;    /* Pointer to input.device base */
     IPTR                nch_IfNum;        /* Interface Number */
-    UWORD               nch_InpCmd;       /* IND_ADDEVENT on V47, else IND_WRITEEVENT */
+    UWORD               nch_InpCmd;       /* IND_ADDEVENT if listed, else IND_WRITEEVENT */
     BOOL                nch_IdleArmed;    /* Finite idle rate set at bind, first report still due */
     BOOL                nch_CapsLock;     /* Caps Lock pressed */
     UBYTE               nch_OldKeyArray[8]; /* Last keys pressed */

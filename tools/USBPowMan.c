@@ -1,6 +1,6 @@
 /*
  *----------------------------------------------------------------------------
- *                     Power Management Tool for Neptune
+ *                     USBPowMan - power management tool for Neptune
  *----------------------------------------------------------------------------
  * Based on the Poseidon Power Management Tool by Chris Hodges <chrisly@platon42.de>.
  */
@@ -13,7 +13,7 @@
 #include <proto/exec.h>
 #include <proto/neptune.h>
 
-#include "PowManTool.h"
+#include "USBPowMan.h"
 #include <string.h>
 #include <neptune_version.h>
 
@@ -25,9 +25,9 @@
 #define ARGS_UNIT           5
 #define ARGS_SIZEOF         6
 
-const char PowManTool_prgname[] = "PowManTool";
+const char USBPowMan_prgname[] = "USBPowMan";
 static const char *template = "SOCKET=OUTLET/N,ON/S,OFF/S,TOGGLE/S,STATUS/S,UNIT/N/K";
-const char PowManTool_version[] = NEP_VER("PowManTool");
+const char USBPowMan_version[] = NEP_VER("USBPowMan");
 static IPTR ArgsArray[ARGS_SIZEOF];
 static struct RDArgs *ArgsHook = NULL;
 

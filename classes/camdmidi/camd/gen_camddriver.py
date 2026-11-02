@@ -16,7 +16,7 @@ import sys, struct
 HUNK_CODE = b'\x00\x00\x03\xe9'
 STUB_MAGIC = b'\x70\xff\x4e\x75\x4d\x44\x45\x56'  # `moveq #-1,d0; rts` + 'MDEV'
 NAME = b'camdusbmidi'
-# Match the NUL terminator too: the driver's $VER cookie and the "camdusbmidi.class" it opens
+# Match the NUL terminator too: the driver's $VER cookie and the "camdusbmidi.usbclass" it opens
 # also spell the name, so a bare substring search can land on those instead of name[].
 NAME_Z = NAME + b'\x00'
 NAME_SIZE = 32   # sizeof(name[]) in camd_driver.c; the class strcpy()s ids of up to 31 chars

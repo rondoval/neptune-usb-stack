@@ -1,6 +1,6 @@
 /*
  *----------------------------------------------------------------------------
- *                     UPS Launcher Tool for Neptune
+ *                     USBUPS - UPS tool for Neptune
  *----------------------------------------------------------------------------
  * Based on the Poseidon UPS Launcher Tool by Chris Hodges <chrisly@platon42.de>.
  */
@@ -13,7 +13,7 @@
 
 #include <devices/usb_hid.h>
 
-#include "UPSTool.h"
+#include "USBUPS.h"
 #include <string.h>
 #include <neptune_version.h>
 
@@ -27,9 +27,9 @@
 #define ARGS_UNIT           7
 #define ARGS_SIZEOF         8
 
-const char UPSTool_prgname[] = "UPSTool";
+const char USBUPS_prgname[] = "USBUPS";
 static const char *template = "RAW/K,ID/S,QUERY/S,TOGGLEBEEPER=TG/S,SHUTDOWN/S,STARTBATTERYTEST=STARTBT/S,STOPBATTERYTEST=STOPBT/S,UNIT/N/K";
-const char UPSTool_version[] = NEP_VER("UPSTool");
+const char USBUPS_version[] = NEP_VER("USBUPS");
 static IPTR ArgsArray[ARGS_SIZEOF];
 static struct RDArgs *ArgsHook = NULL;
 

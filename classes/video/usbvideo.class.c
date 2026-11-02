@@ -34,6 +34,11 @@ static const APTR DevFuncTable[] =
 
 int libInit(struct NepVideoBase * nh)
 {
+    if(nDevNameTaken(DEVNAME))
+    {
+        return FALSE;
+    }
+
     KPRINTF(10, ("libInit nh: 0x%08lx SysBase: 0x%08lx\n", nh, EXEC_BASE_NAME));
 
     nh->nh_UtilityBase = OpenLibrary("utility.library", 39);
@@ -46,6 +51,7 @@ int libInit(struct NepVideoBase * nh)
         return FALSE;
     }
     NewList(&nh->nh_Units);
+    NewList(&nh->nh_Bindings);
 
     if(!(nh->nh_DevBase = (struct NepVideoDevBase *) MakeLibrary((APTR) DevFuncTable, NULL, (APTR) devInit,
        sizeof(struct NepVideoDevBase), NULL)))
@@ -177,7 +183,7 @@ struct NepClassVideo * usbForceInterfaceBinding(struct NepVideoBase *nh, struct 
         ncv->ncv_IfIDString = ifidstr;
         ncv->ncv_UsingDefaultCfg = TRUE;
 
-        psdSafeRawDoFmt(buf, 64, "usbvideo.class<%08lx>", ncv);
+        psdSafeRawDoFmt(buf, 64, CLASS_NAME "<%08lx>", ncv);
         ncv->ncv_ReadySignal = SIGB_SINGLE;
         ncv->ncv_ReadySigTask = FindTask(NULL);
         SetSignal(0, SIGF_SINGLE);
@@ -342,18 +348,19 @@ IPTR (usbDoMethodA)(ULONG methodid asm("d0"), IPTR * methoddata asm("a1"), struc
         {
             /* What is stored may be new - at boot it is, for a camera bound
                before the settings were loaded. Each camera's subtask applies
-               its own; one whose window is open is being set by hand. */
-            struct NepVideoStream *ns;
+               its own, units or not; one whose window is open is being set
+               by hand. */
+            struct NepClassVideo *ncv;
 
             Forbid();
-            ns = (struct NepVideoStream *) nh->nh_Units.lh_Head;
-            while(ns->ns_Unit.unit_MsgPort.mp_Node.ln_Succ)
+            ncv = (struct NepClassVideo *) nh->nh_Bindings.lh_Head;
+            while(ncv->ncv_Node.ln_Succ)
             {
-                if(ns->ns_Binding && !ns->ns_Binding->ncv_GUITask)
+                if(!ncv->ncv_GUITask)
                 {
-                    Signal(ns->ns_Binding->ncv_Task, SIGBREAKF_CTRL_D);
+                    Signal(ncv->ncv_Task, SIGBREAKF_CTRL_D);
                 }
-                ns = (struct NepVideoStream *) ns->ns_Unit.unit_MsgPort.mp_Node.ln_Succ;
+                ncv = (struct NepClassVideo *) ncv->ncv_Node.ln_Succ;
             }
             Permit();
             return TRUE;
@@ -1100,6 +1107,11 @@ void nVideoTask()
                         ioreq->io_Error = uvcControlCommand(ncv, ioreq);
                         break;
 
+                    case NSCMD_UV_SETTINGS:
+                        nOpenBindingCfgWindow(ncv->ncv_ClsBase, ncv);
+                        ioreq->io_Error = ncv->ncv_GUITask ? 0 : IOERR_OPENFAIL;
+                        break;
+
                     case UVCMD_APPLY:
                     {
                         /* the settings window takes back what was done in it */
@@ -1226,6 +1238,11 @@ static void nCloseVideo(struct NepClassVideo *ncv)
     DeleteMsgPort(ncv->ncv_TaskMsgPort);
     CloseLibrary(ncv->ncv_Base);
     Forbid();
+    /* not listed if the set-up failed */
+    if(ncv->ncv_Task)
+    {
+        Remove(&ncv->ncv_Node);
+    }
     ncv->ncv_Task = NULL;
     if(ncv->ncv_ReadySigTask)
     {
@@ -1249,8 +1266,13 @@ struct NepClassVideo * nAllocVideo(void)
     }
     nLogFunction(ncv);
     /* before the units appear: from then on the device signals this task
-       (devClose) and queues at the binding (NSCMD_UV_WAITEVENT) */
+       (devClose) and queues at the binding (NSCMD_UV_WAITEVENT). Listed
+       before the settings are applied: a settings change from now on leaves
+       Ctrl-D pending for the main loop. */
+    Forbid();
     ncv->ncv_Task = thistask;
+    AddTail(&ncv->ncv_ClsBase->nh_Bindings, &ncv->ncv_Node);
+    Permit();
     uvcStatusStart(ncv);
     nAttachUnits(ncv);
     nApplyConfig(ncv);

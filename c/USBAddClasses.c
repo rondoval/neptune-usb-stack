@@ -1,5 +1,7 @@
 /*
-** AddUSBClasses by Chris Hodges <chrisly@platon42.de>
+** USBAddClasses: load the classes in DEVS:USBClasses, or remove them, by hand.
+**
+** Based on Poseidon's AddUSBClasses by Chris Hodges <chrisly@platon42.de>.
 */
 
 #include <stdio.h>
@@ -22,7 +24,7 @@
 #define ARGS_SIZEOF     2
 
 static const char *template = "QUIET/S,REMOVE/S";
-const char *version = NEP_VER("AddUSBClasses") ", (C) The AROS Development Team";
+const char *version = NEP_VER("USBAddClasses") ", (C) The AROS Development Team";
 static IPTR ArgsArray[ARGS_SIZEOF];
 static struct RDArgs *ArgsHook = NULL;
 

@@ -1,7 +1,7 @@
-/* camd_driver.c - the CAMD MIDI driver camdusbmidi.class writes to DEVS:Midi/<id>.
+/* camd_driver.c - the CAMD MIDI driver camdusbmidi.usbclass writes to DEVS:Midi/<id>.
  *
  * camd.library LoadSeg()s this file and calls the MidiDeviceData entry points; the driver
- * opens camdusbmidi.class and hands every port's traffic to the class through the two
+ * opens camdusbmidi.usbclass and hands every port's traffic to the class through the two
  * hooks in struct CAMDAdapter. It follows Commodore's drivers.doc (the CAMD 37.14 release,
  * Aminet mus/midi/camd.lha) and also works with the camd40/AROS rewrite:
  *   Init       takes no parameters (A6 is not the exec base under V37; camd40 puts SysBase
@@ -101,7 +101,7 @@ BOOL Init(void)
     CAMDv40 = camd && camd->lib_Version >= 40;
     Permit();
 
-    nh = OpenLibrary("camdusbmidi.class", 0);
+    nh = OpenLibrary("camdusbmidi.usbclass", 0);
     return nh != NULL;
 }
 

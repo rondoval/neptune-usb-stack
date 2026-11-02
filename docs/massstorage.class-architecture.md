@@ -1,11 +1,10 @@
-# massstorage.class - Architecture
+# massstorage.usbclass - Architecture
 
-> **Scope:** `massstorage.class`, the USB Mass Storage driver: an interface-level class, the
+> **Scope:** `massstorage.usbclass`, the USB Mass Storage driver: an interface-level class, the
 > embedded `usbscsi.device`, three USB transports, the removable-media task and the mounter
 > (`classes/massstorage/mounter`, a fork of the a4091.device mounter, built into the class).
 > It is a client of `neptune.library`; read [neptune.library-architecture.md](neptune.library-architecture.md)
-> first (bulk streams §5.7, binding §5.5, lock borrowing §4.2, suspend and power policy §5.9-§5.10). Transport throughput
-> is covered separately in [massstorage-throughput.md](massstorage-throughput.md).
+> first (bulk streams §5.7, binding §5.5, lock borrowing §4.2, suspend and power policy §5.9-§5.10).
 >
 > This document describes structure, behaviour and the rules that keep it correct. It names
 > functions as anchors; the code is the reference for field layouts, timings, retry counts and
@@ -15,7 +14,7 @@
 
 ## 1. Purpose
 
-`massstorage.class` turns USB storage into AmigaDOS volumes. It has four jobs:
+`massstorage.usbclass` turns USB storage into AmigaDOS volumes. It has four jobs:
 
 1. **Expose storage as a disk device.** Every bound mass-storage interface becomes one
    `usbscsi.device` unit per LUN, speaking the trackdisk, TD64/NSD and `HD_SCSICMD` protocols that
@@ -39,7 +38,7 @@ It binds at the **interface** level, on `MASSSTORE_CLASSCODE`.
 flowchart TB
     FS["filesystems, tools: OpenDevice usbscsi.device"]
     GATE["ROM boot gate (romstartup)"]
-    subgraph MS["massstorage.class binary"]
+    subgraph MS["massstorage.usbclass binary"]
         DEV["usbscsi.device: one unit per LUN"]
         CORE["unit tasks: SCSI layer + BOT / CBI / UAS"]
         RT["removable task"]
@@ -150,8 +149,10 @@ the unit task drains its tags, fires the disk-change interrupts, fails everythin
 its pipes. The removable task is (re)started by every unit task whose unit is removable or flagged
 `ncm_ForceRTCheck` (`nStartRemovableTask` is idempotent). Pre-DOS it is a plain Task that never
 exits; when `dos.library` appears it retires and the unit tasks respawn it as a Process, which makes
-`DoPkt` legal. After that it exits once no unit is alive; a fixed disk's teardown restarts it so
-the auto-unmount runs.
+`DoPkt` legal. After that it runs until the class is expunged, also with no unit left: a unit
+bound while it was leaving would find it still there and never be mounted, and a fixed disk asks
+only once. A fixed disk's teardown starts it when nothing has since DOS arrived, so the
+auto-unmount runs.
 
 ---
 
@@ -258,7 +259,9 @@ refuses under `PFF_NO_FALLBACK` and logs the switch the device seems to need ins
 One command at a time: a 31-byte CBW on bulk OUT, the data phase, a 13-byte CSW on bulk IN whose tag
 must match the CBW's. A failed status with autosense requested sends REQUEST SENSE as a second BOT
 command. Queue depth 1 is the protocol's, not the driver's: the device must return the CSW before
-the next CBW. UAS is the transport that adds queuing.
+the next CBW. UAS is the transport that adds queuing. The three phases cost little on large
+commands: at 512 KB the host round trips are ~2% of the time. (Arming the data-IN and CSW-IN
+transfers back to back on the bulk-IN ring would cut three round trips to one.
 
 The transport is deliberately lenient so that it usually reaches the CSW, because the device's
 status is authoritative: data and CSW stalls are cleared and passed, short packets accepted,
@@ -340,6 +343,15 @@ Quarantined tags count as busy for `nUasTagsIdle`, so the drain and the suspend 
 ladder, which is bounded by construction. **UAS is LUN 0 only:** multi-LUN UAS would need REPORT
 LUNS at bind and one tag engine shared by the LUN units.
 
+**Where the concurrency comes from.** UAS is strictly one command to one tag: a command is never
+split across tags, a tag never carries two commands, and status comes back on the tag it answers.
+So concurrency comes only from splitting a large transfer into several commands, each on its own
+tag, covering contiguous blocks and in flight together up to the queue depth. A system with a block layer above SCSI splits there; `usbscsi.device` is handed one
+arbitrarily large `io_Length` with nothing above it, so the class splits and reassembles itself.
+Throughput comes from queue depth, not command size: on PiStorm + Pi 4 with the VL805, a UAS SSD
+reads 290 MB/s with one 1 MB command in flight and 370 MB/s with four, which is the PCIe Gen2 ×1
+link's ceiling (~400 MB/s).
+
 ### 5.7 Error recovery
 
 | | BOT | CBI / CB | UAS |
@@ -404,9 +416,16 @@ flowchart TD
   RDB partitions keep their own names and environment.
 - **Naming.** A recipe name gets a unit digit and is bumped past collisions (`fix_name_collision`);
   a volume whose device, unit and extent already have a node is skipped (`is_extent_mounted`).
-- **DMA alignment.** The bind caches the HCD's `HA_DMAAlignment`. When it is above 1 the mounter
-  sets `de_Mask` and `de_BufMemType` so DOS buffers stay on the HCD's direct-DMA path instead of
-  being bounced (see [massstorage-throughput.md](massstorage-throughput.md)).
+- **DMA alignment.** The bind caches the HCD's `HA_DMAAlignment` and passes it as the mounter's
+  `dmaAlign`. When it is above 1, recipe mounts get `de_BufMemType = MEMF_FAST|MEMF_PUBLIC`, which
+  keeps the filesystem's own buffers out of Chip RAM; otherwise `MEMF_ANY`. `de_Mask` is always
+  `0x7FFFFFFE`: no filesystem can honour an alignment set through the mask, and the HCD bounces
+  misaligned or unreachable buffers itself. RDB partitions keep the RDB's values. Until 6.3 the mask
+  was narrowed to the alignment and `MEMF_CLEAR` was set (GH #24). fat95 reads into a caller's
+  buffer only if the buffer has every `de_BufMemType` bit, which `MEMF_CLEAR`, an allocation flag,
+  never is; and a buffer that fails the mask goes through the filesystem's own buffers: fat95 fell
+  back to its cache, one cluster at a time, FFS reads 512 bytes at a time, and PFS3, whose pool
+  buffers can never be 64-byte aligned, raises a requester on every such read and stops responding.
 - **Auto-unmount** (`nUnmountPartition`) runs from the removable task when a unit is gone: it sends
   inhibit and die blind to every handler riding the unit, removes the DOS node and unlinks any stale
   boot node. Nobody is left to veto.
@@ -433,7 +452,9 @@ covering extra LUNs and extra storage interfaces.
 `UCM_AttemptSuspendDevice` **refuses rather than drains**: it fails while a synchronous command is
 on the wire (`ncm_CmdBusy`), a UAS tag is busy or quarantined, or a sibling LUN holds the transfer
 lock. Otherwise it clears `ncm_Running`, which stops the media polling. Queued I/O needs nothing:
-`psdDoPipe` resumes the device. Resume sets `ncm_Running` and wakes the unit task. When to suspend
+`psdDoPipe` resumes the device, and a command that starts after the answer, while the library is
+still suspending, either calls the suspend off or gets the device woken for it (core doc §5.9).
+Resume sets `ncm_Running` and wakes the unit task. When to suspend
 is the library's policy (core doc §5.10).
 
 ### 5.11 Configuration

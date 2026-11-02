@@ -136,7 +136,7 @@ struct NepClassHid * usbForceInterfaceBinding(struct NepHidBase *nh, struct PsdI
 
             nLoadBindingConfig(nch);
 
-            psdSafeRawDoFmt(buf, 64, "bootmouse.class<%08lx>", nch);
+            psdSafeRawDoFmt(buf, 64, CLASS_NAME "<%08lx>", nch);
             nch->nch_ReadySignal = SIGB_SINGLE;
             nch->nch_ReadySigTask = FindTask(NULL);
             SetSignal(0, SIGF_SINGLE);
@@ -677,7 +677,6 @@ struct NepClassHid * nAllocHid(void)
             {
                 if(!OpenDevice("input.device", 0, (struct IORequest *) nch->nch_InpIOReq, 0))
                 {
-                    nch->nch_InputBase = (struct Library *) nch->nch_InpIOReq->io_Device;
                     /* IND_ADDEVENT (V47) also drives input.device's own qualifier state,
                        which is what the ROM boot menu samples for its both-buttons check.
                        Only if the device lists it in its NSD query (nInputHasAddEvent,
@@ -802,7 +801,7 @@ void nGUITask()
         MUIA_Application_Version    , (IPTR)VERSION_STRING,
         MUIA_Application_Copyright  , (IPTR)"(C) 2002-2009 Chris Hodges",
         MUIA_Application_Author     , (IPTR)"Chris Hodges <chrisly@platon42.de>",
-        MUIA_Application_Description, (IPTR)"Settings for the bootmouse.class",
+        MUIA_Application_Description, (IPTR)"Settings for the " CLASS_NAME,
         MUIA_Application_Base       , (IPTR)"BOOTMOUSE",
         MUIA_Application_HelpFile   , (IPTR)"HELP:Neptune.guide",
         MUIA_Application_Menustrip  , (IPTR)MenustripObject,

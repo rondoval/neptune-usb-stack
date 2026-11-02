@@ -1,6 +1,6 @@
 /*
  *----------------------------------------------------------------------------
- *                     Rocket Launcher Tool for Neptune
+ *                     USBRocket - rocket launcher tool for Neptune
  *----------------------------------------------------------------------------
  * Based on the Poseidon Rocket Launcher Tool by Chris Hodges <chrisly@platon42.de>.
  */
@@ -18,7 +18,7 @@
 #include <libraries/lowlevel.h>
 #include <devices/usb_hid.h>
 
-#include "RocketTool.h"
+#include "USBRocket.h"
 #include <string.h>
 #include <neptune_version.h>
 
@@ -32,9 +32,9 @@
 #define ARGS_UNIT     7
 #define ARGS_SIZEOF   8
 
-const char RocketTool_prgname[] = "RocketTool";
+const char USBRocket_prgname[] = "USBRocket";
 static const char *template = "LEFT/S,RIGHT/S,UP/S,DOWN/S,FIRE/S,TIME/N/K,JOYPORT/N/K,UNIT/N/K";
-const char RocketTool_version[] = NEP_VER("RocketTool");
+const char USBRocket_version[] = NEP_VER("USBRocket");
 static IPTR ArgsArray[ARGS_SIZEOF];
 static struct RDArgs *ArgsHook = NULL;
 
