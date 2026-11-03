@@ -7432,15 +7432,15 @@ struct PsdUsbClass * (psdAddClass)(STRPTR name asm("a1"), ULONG vers asm("d0"), 
        class drawer, as psdAddHardware() finds HCDs in theirs. Only once DOS is
        up: before that nothing can be loaded, and the ROM startup's probe for
        hid.usbclass is expected to fail quietly. */
-    if(!cls && !strchr((const char *) origname, ':') && !strchr((const char *) origname, '/') &&
-       pOpenDOS(ps)) {
+    if(!cls && *origname && !strchr((const char *) origname, ':') &&
+       !strchr((const char *) origname, '/') && pOpenDOS(ps)) {
         char path[128];
         psdSafeRawDoFmt(path, sizeof(path), NEP_CLASSDRAWER "/%s", origname);
         if((cls = OpenLibrary(path, vers))) {
             name = origname;
         }
     }
-    if(!cls && DOSBase) {
+    if(!cls && *origname && DOSBase) {
         psdAddErrorMsg(RETURN_WARN, (STRPTR) libname,
                        "Cannot open class %s.", origname);
     }
