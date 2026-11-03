@@ -7426,6 +7426,24 @@ struct PsdUsbClass * (psdAddClass)(STRPTR name asm("a1"), ULONG vers asm("d0"), 
             }
         } while(*(++name));
     }
+    /* A bare name ("hub.usbclass") is what a stack started from ROM records for
+       its ROM-resident classes, and OpenLibrary() looks for a bare name only in
+       memory and LIBS:. On a boot without those residents the class lives in the
+       class drawer, as psdAddHardware() finds HCDs in theirs. Only once DOS is
+       up: before that nothing can be loaded, and the ROM startup's probe for
+       hid.usbclass is expected to fail quietly. */
+    if(!cls && *origname && !strchr((const char *) origname, ':') &&
+       !strchr((const char *) origname, '/') && pOpenDOS(ps)) {
+        char path[128];
+        psdSafeRawDoFmt(path, sizeof(path), NEP_CLASSDRAWER "/%s", origname);
+        if((cls = OpenLibrary(path, vers))) {
+            name = origname;
+        }
+    }
+    if(!cls && *origname && DOSBase) {
+        psdAddErrorMsg(RETURN_WARN, (STRPTR) libname,
+                       "Cannot open class %s.", origname);
+    }
     if(cls) {
         Forbid();
         if(FindName(&ps->ps_Classes, cls->lib_Node.ln_Name)) {

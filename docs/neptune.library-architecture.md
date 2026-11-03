@@ -215,7 +215,10 @@ system (`nDevNameTaken()`, `classes/common.h`).
 classes and controllers are removed, missing ones added (`psdAddClass`; `psdAddHardware` and
 `psdEnumerateHardware`), then a class scan binds the root hubs and the hub tasks take over. Settings
 without a hardware list remove no hardware, settings without a class list remove no class, and an
-in-use ROM class is never removed (rule 15). Before DOS it also waits out the boot delay.
+in-use ROM class is never removed (rule 15). A class listed by bare name - the form a stack started
+from ROM saves for its ROM residents - that is neither in memory nor in LIBS: is taken from the class
+drawer, so such settings still work on a boot without the USB ROM. Before DOS it also waits out the
+boot delay.
 
 **ROM boot.** The resident adds `hub.usbclass`, `hubss.usbclass`, `massstorage.usbclass` and the input classes
 (`hid.usbclass`, or the boot keyboard and mouse classes), adds and enumerates the controller, runs a

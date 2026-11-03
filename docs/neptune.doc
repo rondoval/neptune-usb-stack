@@ -788,6 +788,15 @@ psdClearEndpointHalt
         of the path are dropped one at a time, ending with the bare file
         name.
 
+        A bare name (no ':' or '/') that is neither in memory nor in LIBS:
+        is then looked for in DEVS:USBClasses, once dos.library is up. That
+        is the form a stack started from ROM saves for its ROM-resident
+        classes, so its settings still work on a boot without them.
+
+        A class that cannot be opened is reported in the error log once
+        dos.library is up; before that only ROM residents can be opened and a
+        failure is silent.
+
         Usually class libraries will be stored in DEVS:USBClasses.
 
    INPUTS
