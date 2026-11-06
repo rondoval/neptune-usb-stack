@@ -221,6 +221,8 @@ struct NepClassMS
     UWORD               ncm_MaxLUN;       /* Number of LUNs */
     BOOL                ncm_DenyRequests; /* Device is gone! */
     BOOL                ncm_HasMounted;   /* Has mounted some partitions */
+    struct List         ncm_KeptNodes;    /* DOS devices kept for volumes in use
+                                              (massstorage_unmount.c) */
     ULONG               ncm_VDriveUnits;  /* units online on usbscsivd.device for this medium:
                                               its virtual drives (nVDriveMediaChanged) */
     struct VDriveParent *ncm_VDriveParent; /* the unit's record on usbscsivd.device, the

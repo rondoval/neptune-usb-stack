@@ -88,7 +88,7 @@ flowchart TB
 | **Mount glue** | Builds one recipe per filesystem from config and calls the mounter | `nMountDrive`, `MSFsTable`, `nFillMountFS`, `nCDFSCaps` |
 | **Mounter** | Partition parsing, filesystem resolution, naming, node creation | `MountDrive`, `probe_unit`, `mnt_read_table`, `mnt_scan_rdb`, `mnt_scan_legacy`, `mnt_scan_cd`, `mnt_mount_volume`, `mnt_attach_fs` (`mounter/`) |
 | **Virtual drives** | `usbscsivd.device`: one unit per Emu68 virtual drive on a medium, forwarding to `usbscsi.device`; the write fence on the parent unit | `nh_VDrive`, `ncm_VDriveParent` (the unit's handle there), `nVDriveMediaChanged`, `nVDriveFence` (`dev.c`), `nReplyIO` (every reply), `VDriveRefresh` (`mounter/vdrive.c`), `VDriveWriteAllowed`, `VDriveScsiAllowed` (`mounter/vdrive_fence.c`), `VDriveComplete` (`mounter/vdrive_forward.c`) |
-| **Unmount and eject** | Reactive unmount of a gone unit; verified device-wide eject | `nUnmountPartition`, `nDetachDosNode`, `nRemoveDosNode`, `nSafeEjectDevice`, `nDetachEjectNodes`, `nInhibitAll`, `nVolumeParked`, `nQuiesceDevice` |
+| **Unmount and eject** | Reactive unmount of a gone unit; verified device-wide eject | `nUnmountPartition`, `nUnlistNextNode`, `nInhibitHandler`, `nHandlerVolume`, `nRetireHandler`, `nAbandonHandler`, `nRelistKeptNodes`, `nRemountKeptNodes`, `nSafeEjectDevice`, `nUnlistEjectNodes`, `nInhibitAll`, `nQuiesceDevice` (`massstorage_unmount.c`) |
 | **Config and GUI** | Per-device and per-LUN IFF chunks, reload on prefs change, MUI window | `ClsDevCfg`, `ClsUnitCfg`, `nLoadBindingConfig`, `nReapplyConfig`, `nStoreConfig`, `nGUITask`, `AutoDetectMaxTransfer` |
 
 **Units outlive bindings.** A unit is freed only in `libExpunge`; a re-plugged device is matched
@@ -440,11 +440,40 @@ flowchart TD
   never is; and a buffer that fails the mask goes through the filesystem's own buffers: fat95 fell
   back to its cache, one cluster at a time, FFS reads 512 bytes at a time, and PFS3, whose pool
   buffers can never be 64-byte aligned, raises a requester on every such read and stops responding.
-- **Auto-unmount** (`nUnmountPartition`) runs from the removable task when a unit is gone: it takes
-  every DOS node riding the unit out of the DOS list, sends inhibit and die blind to its handler and
-  unlinks any stale boot node. Nobody is left to veto. A handler rides the unit if its node names `usbscsi.device` and
-  the unit, or `usbscsivd.device` and one of the unit's virtual drives (`nDosEntryMatches`); safe
-  eject collects by the same test.
+- **Auto-unmount** (`nUnmountPartition`) runs on every removable-task pass while a unit is gone and
+  has mounts. Each DOS node riding the unit leaves the DOS list, found and removed under one write
+  lock (`nUnlistNextNode`), and its handler is inhibited; a node with nothing in use is then retired
+  (die, any stale boot node unlinked). A handler rides the unit if its node names `usbscsi.device`
+  and the unit, or `usbscsivd.device` and one of the unit's virtual drives (`nDosEntryMatches`);
+  safe eject collects by the same test.
+- **A volume still in use stays.** A handler with files or locks open parks them on its volume, as
+  for a removed disk (listed, no task, the locks in `dol_LockList`, each still naming the handler's
+  port); told to die then, PFS3 exits with them, and the next `Close()` goes to a port that is gone.
+  One rule, shared with safe eject, says whether a volume is in use (`nInhibitHandler`): the inhibit
+  left locks parked, or the handler refused it for any reason but having no volume
+  (`ERROR_DEVICE_NOT_MOUNTED`) or not supporting it (`ERROR_ACTION_NOT_KNOWN`). Such a node is kept
+  in `ncm_KeptNodes` instead: out of the DOS list, so no desktop shows it busy, and inhibited, so
+  the handler never touches the missing medium; one that refused is asked again each pass. PFS3 on a
+  partition that is not floppy-like neither watches for disk changes nor checks `TD_CHANGESTATE`,
+  and reads at once when let go: released while the drive is away, it raises a read-error requester.
+  When the medium is back, the mount pass puts the kept nodes back into the DOS list before
+  `nMountDrive` (the mounter counts them mounted already) and lifts the inhibits after it, once the
+  virtual drives are online (`nRelistKeptNodes`, `nRemountKeptNodes`): each handler finds its volume
+  and takes its locks back over, as `DiskChange` does. A node whose name was taken while the drive
+  was away cannot go back; the mounter, not seeing it, mounts its partition again under another
+  name, so it stays kept and inhibited from then on (`kdn_Stranded`): two handlers must never share
+  a partition. A kept node is retired once its handler holds nothing (`nHandlerVolume`, which walks
+  the DOS list under `Forbid()` too: PFS3 frees volume nodes under `Forbid()` alone); an inhibited
+  PFS3 lets `UnLock()` through but refuses `Close()`, so a file left open keeps its volume until the
+  drive is back.
+- **A volume another handler took over: its first handler never dies.** A handler that finds a
+  parked volume of its own disk takes it over with the locks, as from a floppy moved to another
+  drive: the medium went into another reader, or was mounted again under another name. PFS3 then
+  goes on using the volume and lock memory it finds, which came from the first handler's pools, and
+  a dying PFS3 handler deletes its pools. So each kept node remembers the volume its handler held
+  (`kdn_Volume`, compared only); once that volume is listed but another handler's
+  (`HOLD_ADOPTED`), the node is let go without `ACTION_DIE` (`nAbandonHandler`): inhibited, the
+  handler stays idle until the next reboot. `ncm_HasMounted` clears only when nothing is kept.
 
 ### 5.9 Safe eject
 
@@ -459,12 +488,13 @@ covering extra LUNs and extra storage interfaces.
   checked inhibit. One refusal puts the nodes back, then re-enables the handlers already inhibited,
   clears the latch and returns `SAFEEJECT_BUSY` naming the volume. A handler that cannot inhibit
   proceeds after the flush.
-- **An inhibit that parks locks is a refusal too** (`nVolumeParked`). PFS3 does not refuse an
-  inhibit with files or locks open: it takes the volume away as for a removed disk and parks the
-  locks in the volume node's `dol_LockList`. Told to die, it exits with them, and their next use
-  (a `Close()`, an `UnLock()`) goes to a port that is gone. So the volume each handler had mounted
-  is noted before its inhibit (`nBusyName`), and still being listed with locks parked afterwards
-  vetoes the eject; releasing the inhibit gives the handler its volume and locks back.
+- **An inhibit that parks locks is a refusal too.** PFS3 does not refuse an inhibit with files or
+  locks open: it takes the volume away as for a removed disk and parks the locks in the volume
+  node's `dol_LockList`. Told to die, it exits with them, and their next use (a `Close()`, an
+  `UnLock()`) goes to a port that is gone. So the eject applies the auto-unmount's rule
+  (`nInhibitHandler`): locks left parked veto it, and releasing the inhibit gives the handler its
+  volume and locks back. The volume is named before its inhibit, for the veto message
+  (`nHandlerVolume`).
 - **Nodes leave the DOS list before the inhibit,** here and in auto-unmount. An inhibit takes the
   volume away, and a desktop rescans its disk icons when a volume goes. A device it still finds
   answers `ACTION_DISK_INFO` with `ID_BUSY` and gets a "BUSY" icon (Directory Opus 5 shows one),

@@ -127,11 +127,11 @@ LONG nStartStop(struct NepClassMS *ncm, struct IOStdReq *ioreq);
 BOOL nStartRemovableTask(struct Library *ps, struct NepMSBase *nh);
 struct NepMSBase * nAllocRT(void);
 void nFreeRT(struct NepMSBase *nh);
-/* DOS access and node teardown (massstorage.class.c; shared with safe-eject) */
-BOOL nOpenDOSLib(struct NepMSBase *nh);
-BOOL nOpenDOS(struct NepMSBase *nh);
-void nUnmountPartition(struct NepClassMS *ncm);
-void nRemoveDosNode(struct NepClassMS *ncm, struct DeviceNode *node);
+/* Unmount and eject (massstorage_unmount.c) */
+BOOL nUnmountPartition(struct NepClassMS *ncm);
+void nRelistKeptNodes(struct NepClassMS *ncm);
+void nRemountKeptNodes(struct NepClassMS *ncm);
+IPTR nSafeEjectDevice(struct NepMSBase *nh, struct NepClassMS *ncm, STRPTR busybuf, ULONG busybuflen);
 /* Mount recipe dispatch (massstorage.class.c: its helpers are shared with the
    config GUI, so only the entry point is exported) */
 struct MountResult;
@@ -140,11 +140,6 @@ void nVDriveMediaChanged(struct NepClassMS *ncm);
 void nReplyIO(struct NepMSBase *nh, struct IOStdReq *ioreq);
 LONG nIOCmdTunnel(struct NepClassMS *ncm, struct IOStdReq *ioreq);
 LONG nScsiDirectTunnel(struct NepClassMS *ncm, struct SCSICmd *scsicmd);
-
-BOOL nDosEntryMatches(struct NepClassMS *ncm, struct DosList *list);
-struct DeviceNode * FindMatchingDevice(struct NepClassMS *ncm);
-struct DosList * nBusyName(struct NepClassMS *ncm, struct DeviceNode *node, STRPTR buf, ULONG len);
-IPTR nSafeEjectDevice(struct NepMSBase *nh, struct NepClassMS *ncm, STRPTR busybuf, ULONG busybuflen);
 
 void AutoDetectMaxTransfer(struct NepClassMS *ncm);
 

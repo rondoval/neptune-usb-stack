@@ -226,13 +226,16 @@ static inline BOOL nRTIsPreDOS(struct NepMSBase *nh)
 }
 
 /* /// "nRTAutoUnmount()" */
-/* A gone unit takes its partitions with it, if so configured. */
+/* A gone unit takes its partitions with it, if so configured: over as many
+   passes as its volumes keep files open (nUnmountPartition()). */
 static void nRTAutoUnmount(struct NepClassMS *ncm)
 {
     if(ncm->ncm_DenyRequests && ncm->ncm_CUC->cuc_AutoUnmount && ncm->ncm_HasMounted)
     {
-        nUnmountPartition(ncm);
-        ncm->ncm_HasMounted = FALSE;
+        if(nUnmountPartition(ncm))
+        {
+            ncm->ncm_HasMounted = FALSE;
+        }
     }
 }
 /* \\\ */
@@ -470,7 +473,12 @@ static void nRTMountPass(struct NepMSBase *nh, struct NepClassMS *ncm)
         // the mounter dispatches on the device type
         struct MountResult mstats;
 
+        /* volumes kept in use while the device was gone: their devices back
+           into the DOS list before the mounter looks, their handlers let go
+           after it, once the virtual drives are online again */
+        nRelistKeptNodes(ncm);
         ncm->ncm_HasMounted = nMountDrive(ncm, &mstats);
+        nRemountKeptNodes(ncm);
 
         /* mstats.mounted counts the already mounted volumes too */
         psdAddErrorMsg(mstats.renamed ? RETURN_WARN : RETURN_OK,

@@ -10,11 +10,19 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/mounter/mounter.cmake)
 
 add_neptune_class(massstorage BASETYPE NepMSBase GUI
     SOURCES massstorage_bulk.c massstorage_cbi.c massstorage_uas.c
-            massstorage_removable.c dev.c
+            massstorage_removable.c massstorage_unmount.c dev.c
             ${MOUNTER_SOURCES} ${VDRIVE_SOURCES}
     DEFINES HAS_LIBOPEN HAS_LIBCLOSE MOUNTER_LOG MOUNTER_TRACE=1)
 
+set(MS_STRICT_WARNINGS
+    -Wall -Wextra -Wconversion -Wsign-conversion -Wshadow -Wmissing-prototypes -Wstrict-prototypes)
 set_source_files_properties(
     ${MOUNTER_C_SOURCES} ${VDRIVE_SOURCES}
     PROPERTIES
-    COMPILE_OPTIONS "-Wall;-Wextra;-Wconversion;-Wsign-conversion;-Wshadow;-Wmissing-prototypes;-Wstrict-prototypes")
+    COMPILE_OPTIONS "${MS_STRICT_WARNINGS}")
+# neptune.library's vararg calls take their format strings as STRPTR, and a
+# string literal is char *: -Wpointer-sign (in -Wall) would flag every one.
+set_source_files_properties(
+    massstorage_unmount.c
+    PROPERTIES
+    COMPILE_OPTIONS "${MS_STRICT_WARNINGS};-Wno-pointer-sign")

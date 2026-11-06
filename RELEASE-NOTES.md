@@ -15,12 +15,15 @@ Everything in this archive reports version **6.4**, followed by the CPU it was b
   nothing writes them by two routes.
 * Swapping the card and Eject cover the virtual drives' volumes too.
 
-## Safe eject
+## Ejecting and unplugging drives
 
 * **An eject is refused while a file or drawer on the drive is open,** Directory Opus windows
   included, and the requester names the volume. On PFS3 volumes it used to go ahead, and the
   program holding the file could then hang when it closed it.
 * **No "BUSY" disk icons are left behind** after an eject on desktops such as Directory Opus 5.
+* **A drive pulled out while a file or drawer on it is open** no longer leaves the program to hang
+  when it closes the file. The volume stays listed, and comes back with its open files when the same
+  drive is plugged back in.
 
 ## Bug fixes
 
