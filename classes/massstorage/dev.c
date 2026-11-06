@@ -168,6 +168,37 @@ DEVBASETYPEPTR (devReserved)(struct NepMSDevBase * base asm("a6"))
     return NULL;
 }
 
+/* The write fence: a virtual drive's blocks belong to usbscsivd.device, and on
+   our own unit they are read-only to everyone else (mounter/vdrive.h). Returns
+   0, or the error that completes the request. */
+static WORD nVDriveFence(struct NepClassMS *unit, struct IOStdReq *ioreq)
+{
+    struct VDriveParent *parent = unit->ncm_VDriveParent;
+    uint64_t offset = ioreq->io_Offset;
+
+    switch(ioreq->io_Command)
+    {
+        case HD_SCSICMD:
+            /* refused: the CHECK CONDITION and its sense are already in place */
+            return VDriveScsiAllowed(parent, (struct IORequest *) ioreq,
+                                     (struct SCSICmd *) ioreq->io_Data) ? 0 : HFERR_BadStatus;
+
+        case TD_WRITE64:
+        case TD_FORMAT64:
+        case NSCMD_TD_WRITE64:
+        case NSCMD_TD_FORMAT64:
+            offset |= (uint64_t) ioreq->io_Actual << 32;
+            /* fall through */
+        case CMD_WRITE:
+        case TD_FORMAT:
+            return VDriveWriteAllowed(parent, (struct IORequest *) ioreq, offset,
+                                      ioreq->io_Length) ? 0 : TDERR_WriteProt;
+
+        default:
+            return 0;
+    }
+}
+
 void (devBeginIO)(struct IOStdReq * ioreq asm("a1"), struct NepMSDevBase * base asm("a6"))
 {
     
@@ -231,7 +262,7 @@ void (devBeginIO)(struct IOStdReq * ioreq asm("a1"), struct NepMSDevBase * base 
                 if(unit->ncm_DenyRequests)
                 {
                     ret = TDERR_DiskChanged;
-                } else {
+                } else if((ret = nVDriveFence(unit, ioreq)) == 0) {
                     ioreq->io_Flags &= ~IOF_QUICK;
                     ret = RC_DONTREPLY;
                     PutMsg(&unit->ncm_Unit.unit_MsgPort, (struct Message *) ioreq);
@@ -263,7 +294,7 @@ void (devBeginIO)(struct IOStdReq * ioreq asm("a1"), struct NepMSDevBase * base 
                 if(unit->ncm_DenyRequests)
                 {
                     ret = IOERR_ABORTED;
-                } else {
+                } else if((ret = nVDriveFence(unit, ioreq)) == 0) {
                     ioreq->io_Flags &= ~IOF_QUICK;
                     ret = RC_DONTREPLY;
                     PutMsg(&unit->ncm_Unit.unit_MsgPort, (struct Message *) ioreq);
@@ -310,7 +341,7 @@ LONG (devAbortIO)(struct IOStdReq * ioreq asm("a1"), struct NepMSDevBase * base 
             {
                 Remove((struct Node *) ioreq);
                 ioreq->io_Error = IOERR_ABORTED;
-                ReplyMsg(&ioreq->io_Message);
+                nReplyIO(base->np_ClsBase, ioreq);
                 Permit();
                 return(0);
             }
@@ -414,6 +445,6 @@ void TermIO(struct IOStdReq *ioreq,
     /* If not quick I/O, reply the message */
     if(!(ioreq->io_Flags & IOF_QUICK))
     {
-        ReplyMsg(&ioreq->io_Message);
+        nReplyIO(base->np_ClsBase, ioreq);
     }
 }

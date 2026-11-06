@@ -2,6 +2,8 @@
 /* DEVICE STUFF */
 
 #define DEVNAME             "usbscsi.device"
+/* the virtual drives on its units (mounter/vdrive.h) */
+#define VDNAME              "usbscsivd.device"
 
 #define DEVBASETYPEPTR struct NepMSDevBase *
 

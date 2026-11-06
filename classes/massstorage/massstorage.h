@@ -221,6 +221,11 @@ struct NepClassMS
     UWORD               ncm_MaxLUN;       /* Number of LUNs */
     BOOL                ncm_DenyRequests; /* Device is gone! */
     BOOL                ncm_HasMounted;   /* Has mounted some partitions */
+    ULONG               ncm_VDriveUnits;  /* units online on usbscsivd.device for this medium:
+                                              its virtual drives (nVDriveMediaChanged) */
+    struct VDriveParent *ncm_VDriveParent; /* the unit's record on usbscsivd.device, the
+                                              handle the write fence and VDriveParentGone()
+                                              take; NULL until it has had a virtual drive */
     BOOL                ncm_UnitReady;    /* Unit is ready */
     ULONG               ncm_ChangeCount;  /* Number of disk changes */
     ULONG               ncm_LastChange;   /* Change number last interrupt created */
@@ -385,6 +390,8 @@ struct NepClassMS
         ((struct Node *) (ncm))->ln_Succ;                                 \
         (ncm) = (struct NepClassMS *) ((struct Node *) (ncm))->ln_Succ)
 
+struct VDrive; /* mounter/vdrive.h */
+
 struct NepMSBase
 {
     struct Library      nh_Library;       /* standard */
@@ -409,6 +416,8 @@ struct NepMSBase
     struct MsgPort     *nh_TimerMsgPort;  /* Port for timer.device */
     struct timerequest *nh_TimerIOReq;    /* Timer IO Request */
     BOOL                nh_RestartIt;     /* Restart removable task? */
+    struct VDrive      *nh_VDrive;        /* usbscsivd.device, made by the first virtual drive
+                                              found; NULL until then */
 };
 
 struct NepMSDevBase

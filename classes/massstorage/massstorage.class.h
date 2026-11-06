@@ -34,6 +34,7 @@
 
 #include "massstorage.h"
 #include "dev.h"
+#include "mounter/vdrive.h"
 
 #ifndef TD_READ64
 #define TD_READ64     24
@@ -135,6 +136,8 @@ void nRemoveDosNode(struct NepClassMS *ncm, struct DeviceNode *node);
    config GUI, so only the entry point is exported) */
 struct MountResult;
 BOOL nMountDrive(struct NepClassMS *ncm, struct MountResult *stats);
+void nVDriveMediaChanged(struct NepClassMS *ncm);
+void nReplyIO(struct NepMSBase *nh, struct IOStdReq *ioreq);
 LONG nIOCmdTunnel(struct NepClassMS *ncm, struct IOStdReq *ioreq);
 LONG nScsiDirectTunnel(struct NepClassMS *ncm, struct SCSICmd *scsicmd);
 

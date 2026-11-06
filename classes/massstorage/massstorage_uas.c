@@ -199,7 +199,7 @@ static void nUasFinalizeTag(struct NepClassMS *ncm, struct UasTag *ut, LONG ioer
     {
         ioreq->io_Error = ioerr;
         ioreq->io_Actual = ut->ut_Offset;
-        ReplyMsg((struct Message *) ioreq);
+        nReplyIO(ncm->ncm_ClsBase, ioreq);
     }
 }
 

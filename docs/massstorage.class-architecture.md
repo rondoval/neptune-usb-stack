@@ -86,7 +86,8 @@ flowchart TB
 | **UAS transport** | Tagged IUs over stream pipes; async tag engine plus a synchronous path; ABORT TASK ladder | `nScsiDirectUAS`, `nUasDoCommand`, `nUasSubmitTag`, `nUasReapTags`, `nUasProcessQuarantine`, `nUasDrainTags`, `nUasInitTags`, `struct UasTag` |
 | **Removable task** | Media polling, disk-change edges, mount dispatch, boot-gate verdict, auto-unmount | `nRemovableTask`, `nRTPollMedia`, `nRTMountPass`, `nRTDOSArrived`, `nIOCmdTunnel` (`massstorage_removable.c`) |
 | **Mount glue** | Builds one recipe per filesystem from config and calls the mounter | `nMountDrive`, `MSFsTable`, `nFillMountFS`, `nCDFSCaps` |
-| **Mounter** | Partition parsing, filesystem resolution, naming, node creation | `MountDrive`, `probe_unit`, `mnt_scan_rdb`, `mnt_scan_legacy`, `mnt_scan_cd`, `mnt_mount_volume`, `attach_fs` (`mounter/`) |
+| **Mounter** | Partition parsing, filesystem resolution, naming, node creation | `MountDrive`, `probe_unit`, `mnt_read_table`, `mnt_scan_rdb`, `mnt_scan_legacy`, `mnt_scan_cd`, `mnt_mount_volume`, `mnt_attach_fs` (`mounter/`) |
+| **Virtual drives** | `usbscsivd.device`: one unit per Emu68 virtual drive on a medium, forwarding to `usbscsi.device`; the write fence on the parent unit | `nh_VDrive`, `ncm_VDriveParent` (the unit's handle there), `nVDriveMediaChanged`, `nVDriveFence` (`dev.c`), `nReplyIO` (every reply), `VDriveRefresh` (`mounter/vdrive.c`), `VDriveWriteAllowed`, `VDriveScsiAllowed` (`mounter/vdrive_fence.c`), `VDriveComplete` (`mounter/vdrive_forward.c`) |
 | **Unmount and eject** | Reactive unmount of a gone unit; verified device-wide eject | `nUnmountPartition`, `nRemoveDosNode`, `nSafeEjectDevice`, `nInhibitAll`, `nQuiesceDevice` |
 | **Config and GUI** | Per-device and per-LUN IFF chunks, reload on prefs change, MUI window | `ClsDevCfg`, `ClsUnitCfg`, `nLoadBindingConfig`, `nReapplyConfig`, `nStoreConfig`, `nGUITask`, `AutoDetectMaxTransfer` |
 
@@ -380,7 +381,7 @@ flowchart TD
     REM -->|"no"| PASS
     EDGE --> PASS{"ChangeCount moved, or remount pending?"}
     PASS -->|"no"| NEXT["next unit"]
-    PASS -->|"media changed"| ANN["refresh write protect; Cause every disk-change interrupt"]
+    PASS -->|"media changed"| ANN["refresh write protect; Cause every disk-change interrupt; rescan virtual drives"]
     PASS -->|"remount only"| MOUNT
     ANN --> MOUNT["ready and not ejected: probe block size if unknown, nMountDrive"]
     MOUNT --> NEXT
@@ -414,6 +415,17 @@ flowchart TD
   so after DOS the configured handler wins over a ROM CD filesystem registered on the same dostype.
   `nCDFSCaps` adds the any-format and audio-disc flags only when the handler is ODFileSystem.
   RDB partitions keep their own names and environment.
+- **Virtual drives.** An MBR `0x76` or Emu68-GPT partition holds a whole RDB disk. The mounter
+  skips it on `usbscsi.device`; on a media change `nVDriveMediaChanged` rescans the medium
+  (`VDriveRefresh`), which makes each one a unit of `usbscsivd.device` (created by the first found,
+  numbered unit × 10 + slot) and fences its blocks on our unit. `nMountDrive` then mounts those
+  units' RDBs, under the same per-LUN RDB and boot switches, and counts them with the unit's own. A
+  gone or ejected medium takes them offline (`VDriveParentGone`); so does the unit task's exit. The
+  DOS-arrival pass does not rescan: only a real change does.
+- **The fence.** `devBeginIO` asks `nVDriveFence` before queuing a write, format or
+  `HD_SCSICMD`: into a virtual drive's blocks they complete with `TDERR_WriteProt`, or
+  `HFERR_BadStatus` with DATA PROTECT sense, unless they come from `usbscsivd.device` itself.
+  Reads are never fenced.
 - **Naming.** A recipe name gets a unit digit and is bumped past collisions (`fix_name_collision`);
   a volume whose device, unit and extent already have a node is skipped (`is_extent_mounted`).
 - **DMA alignment.** The bind caches the HCD's `HA_DMAAlignment` and passes it as the mounter's
@@ -428,7 +440,9 @@ flowchart TD
   buffers can never be 64-byte aligned, raises a requester on every such read and stops responding.
 - **Auto-unmount** (`nUnmountPartition`) runs from the removable task when a unit is gone: it sends
   inhibit and die blind to every handler riding the unit, removes the DOS node and unlinks any stale
-  boot node. Nobody is left to veto.
+  boot node. Nobody is left to veto. A handler rides the unit if its node names `usbscsi.device` and
+  the unit, or `usbscsivd.device` and one of the unit's virtual drives (`nDosEntryMatches`); safe
+  eject collects by the same test.
 
 ### 5.9 Safe eject
 
@@ -551,6 +565,11 @@ and change interrupts, protection status, start/stop/eject, reset/flush; TD64 an
 commands; `NSCMD_DEVICEQUERY`; `HD_SCSICMD` passthrough. Units are numbered from the configured
 default unit upwards, one per LUN.
 
+**Implemented (`usbscsivd.device`, created with the first virtual drive):** trackdisk, TD64 and NSD
+block I/O, geometry, change detection and change interrupts, `NSCMD_DEVICEQUERY`, and an
+`HD_SCSICMD` emulation for HDToolBox. Unit = `usbscsi.device` unit × 10 + the virtual drive's order
+on it (0-9). See the mounter's README, section 5.
+
 **Used from the library:** interface and device attributes (speed, hardware, DMA alignment, stream
 support, alternates, endpoint stream counts), pipes and stream ids, `psdSetAltInterface`,
 `psdClearEndpointHalt`, `psdResetDevice`, subtask spawning and lock borrowing, config chunks and the
@@ -560,4 +579,5 @@ prefs-read state, the error log.
 
 **External standards:** USB Mass Storage Class Bulk-Only Transport 1.0 and CBI 1.1; USB Attached
 SCSI (T10 UAS, USB UAS 1.0) over USB 3 bulk streams; SCSI SPC/SBC/MMC command sets, with UFI and
-ATAPI variants; AmigaDOS trackdisk, TD64 and NSD; RDB, MBR and GPT partitioning.
+ATAPI variants; AmigaDOS trackdisk, TD64 and NSD; RDB, MBR and GPT partitioning; Emu68's virtual
+drives (MBR type `0x76`, GPT type `3F82EEBC-87C9-4097-8165-89D6540557C0`).

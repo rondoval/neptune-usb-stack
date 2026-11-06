@@ -446,6 +446,9 @@ static void nRTMountPass(struct NepMSBase *nh, struct NepClassMS *ncm)
     if(mediaChanged)
     {
         nRTAnnounceChange(nh, ncm);
+        /* a new medium may bring virtual drives, a gone one takes them away;
+           the DOS-arrival pass finds them as the last change left them */
+        nVDriveMediaChanged(ncm);
     }
     BOOL retryMount = FALSE;
 
@@ -469,11 +472,12 @@ static void nRTMountPass(struct NepMSBase *nh, struct NepClassMS *ncm)
 
         ncm->ncm_HasMounted = nMountDrive(ncm, &mstats);
 
+        /* mstats.mounted counts the already mounted volumes too */
         psdAddErrorMsg(mstats.renamed ? RETURN_WARN : RETURN_OK,
                        (STRPTR) libname,
                        "Unit %ld: %ld mounted, %ld already, %ld deferred, %ld renamed.",
-                       ncm->ncm_UnitNo, mstats.mounted, mstats.alreadyMounted,
-                       mstats.deferred, mstats.renamed);
+                       ncm->ncm_UnitNo, mstats.mounted - mstats.alreadyMounted,
+                       mstats.alreadyMounted, mstats.deferred, mstats.renamed);
 
         /* A mount can fail on a drive that has only just become
            ready: the mounter retries READ TOC and the PVD read

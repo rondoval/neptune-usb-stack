@@ -207,7 +207,9 @@ static ULONG nCDFSCaps(const char *path)
    superfloppy FAT/NTFS/exFAT, CD/DVD media. What gets mounted and with which
    filesystem comes from the unit/device config; the medium is read through
    our own usbscsi.device (single explicit unit, array form so unit 0 is
-   unambiguous). Returns TRUE if it mounted >= 1 partition. */
+   unambiguous). The medium's virtual drives mount from their own units on
+   usbscsivd.device, an RDB disk each. Returns TRUE if it mounted >= 1
+   partition. */
 BOOL nMountDrive(struct NepClassMS *ncm, struct MountResult *stats)
 {
     struct ClsDevCfg *cdc = ncm->ncm_CDC;
@@ -254,6 +256,30 @@ BOOL nMountDrive(struct NepClassMS *ncm, struct MountResult *stats)
 
     n = MountDrive(&ms, &result);
 
+    if(ncm->ncm_VDriveUnits && cuc->cuc_AutoMountRDB)
+    {
+        ULONG vunits[VDRIVE_SLOTS];
+        struct MountResult vresult;
+
+        for(ULONG s = 0; s < ncm->ncm_VDriveUnits; s++)
+        {
+            vunits[s] = VDRIVE_UNIT(unit, s);
+        }
+        ms.deviceName = (const UBYTE *) VDNAME;
+        ms.units      = vunits;
+        ms.unitCount  = ncm->ncm_VDriveUnits;
+        /* independent disks: one's RDBFF_LAST says nothing about the next */
+        ms.flags     |= MSF_NO_LEGACY|MSF_NO_CD|MSF_IGNORE_LAST;
+        LONG vn = MountDrive(&ms, &vresult);
+        KPRINTF(10, ("MountDrive(%s, %ld units) = %ld\n", VDNAME, ncm->ncm_VDriveUnits, vn));
+        (void) vn;
+        result.mounted        += vresult.mounted;
+        result.deferred       += vresult.deferred;
+        result.alreadyMounted += vresult.alreadyMounted;
+        result.renamed        += vresult.renamed;
+        result.recognized     |= vresult.recognized;
+    }
+
     /* Remember whether anything was left for a later pass: before DOS exists the
        mounter cannot LoadSeg() a handler out of L:, so those volumes are counted
        rather than mounted. Nothing deferred means a second MountDrive() has
@@ -267,7 +293,51 @@ BOOL nMountDrive(struct NepClassMS *ncm, struct MountResult *stats)
         *stats = result;
     }
     KPRINTF(10, ("MountDrive(unit %ld) = %ld\n", ncm->ncm_UnitNo, n));
-    return (n > 0);
+    (void) n;
+    return (result.mounted > 0);
+}
+
+/* The medium changed: rescan its virtual drives (MBR 0x76, Emu68's GPT type),
+   or take them offline with the medium gone or ejected. Each becomes a unit of
+   usbscsivd.device, made by the first one found (mounter/vdrive.h), and its
+   blocks turn read-only on our own unit. Rescanned whether or not RDBs are
+   automounted: the blocks are protected either way. */
+void nVDriveMediaChanged(struct NepClassMS *ncm)
+{
+    static const char vdIdString[] = NEP_NAME_VER(VDNAME) " (" NEPTUNE_DATE ")";
+    struct NepMSBase *nh = ncm->ncm_ClsBase;
+
+    if(ncm->ncm_UnitReady && (!ncm->ncm_Ejected))
+    {
+        const struct VDriveConfig cfg =
+        {
+            .SysBase    = EXEC_BASE_NAME,
+            .name       = VDNAME,
+            .idString   = vdIdString,
+            .version    = NEPTUNE_VERSION,
+            .revision   = NEPTUNE_REVISION,
+            .parentName = DEVNAME,
+        };
+        ncm->ncm_VDriveUnits = VDriveRefresh(&nh->nh_VDrive, &cfg, ncm->ncm_UnitNo,
+                                             &ncm->ncm_VDriveParent);
+    } else {
+        VDriveParentGone(ncm->ncm_VDriveParent);
+        ncm->ncm_VDriveUnits = 0;
+    }
+}
+
+/* Reply a finished request. usbscsivd.device's own go back to it
+   (mounter/vdrive.h), which completes the request behind each on the spot;
+   they come back no other way, so every reply path calls this. Every other
+   request is ReplyMsg()ed. Task context only (the unit task, or a client's
+   BeginIO, AbortIO or CloseDevice), never an interrupt; the request is not
+   touched afterwards. */
+void nReplyIO(struct NepMSBase *nh, struct IOStdReq *ioreq)
+{
+    if(!VDriveComplete(nh->nh_VDrive, (struct IORequest *) ioreq))
+    {
+        ReplyMsg((struct Message *) ioreq);
+    }
 }
 
 static inline BOOL nIsBulkTransport(ULONG proto)
@@ -390,6 +460,19 @@ int libExpunge(struct NepMSBase * nh)
     struct NepClassMS *ncm;
 
     KPRINTF(10, ("libExpunge nh: 0x%08lx\n", nh));
+
+    /* usbscsivd.device holds open every unit that had a virtual drive. When
+       nobody else does, it goes first, unless one of its own units is open. */
+    if(nh->nh_VDrive &&
+       (nh->nh_DevBase->np_Library.lib_OpenCnt == 1 + VDriveHeldOpens(nh->nh_VDrive)))
+    {
+        if(!VDriveDestroy(nh->nh_VDrive))
+        {
+            KPRINTF(5, ("libExpunge: a virtual drive is in use\n"));
+            return(FALSE);
+        }
+        nh->nh_VDrive = NULL;
+    }
 
     if((nh->nh_DevBase->np_Library.lib_OpenCnt == 1))
     {
@@ -1837,7 +1920,7 @@ void nMSTask()
                 {
                     case TD_GETGEOMETRY:
                         nGetGeometry(ncm, ioreq);
-                        ReplyMsg((struct Message *) ioreq);
+                        nReplyIO(ncm->ncm_ClsBase, ioreq);
                         break;
 
                     case TD_EJECT:
@@ -1848,7 +1931,7 @@ void nMSTask()
                            the reordering SCSI SIMPLE tasks permit */
                         nUasDrainTags(ncm);
                         nStartStop(ncm, ioreq);
-                        ReplyMsg((struct Message *) ioreq);
+                        nReplyIO(ncm->ncm_ClsBase, ioreq);
                         break;
 
                     case CMD_READ:
@@ -1856,7 +1939,7 @@ void nMSTask()
                     case NSCMD_TD_READ64:
                     case TD_READ64:
                         nRead64(ncm, ioreq);
-                        ReplyMsg((struct Message *) ioreq);
+                        nReplyIO(ncm->ncm_ClsBase, ioreq);
                         break;
 
                     case TD_SEEK:
@@ -1864,7 +1947,7 @@ void nMSTask()
                     case NSCMD_TD_SEEK64:
                     case TD_SEEK64:
                         nSeek64(ncm, ioreq);
-                        ReplyMsg((struct Message *) ioreq);
+                        nReplyIO(ncm->ncm_ClsBase, ioreq);
                         break;
 
                     case TD_FORMAT:
@@ -1875,12 +1958,12 @@ void nMSTask()
                     case TD_FORMAT64:
                     case TD_WRITE64:
                         nWrite64(ncm, ioreq);
-                        ReplyMsg((struct Message *) ioreq);
+                        nReplyIO(ncm->ncm_ClsBase, ioreq);
                         break;
 
                     case HD_SCSICMD:
                         ioreq->io_Error = nScsiDirect(ncm, ioreq->io_Data);
-                        ReplyMsg((struct Message *) ioreq);
+                        nReplyIO(ncm->ncm_ClsBase, ioreq);
                         break;
 
                     case CMD_RESET:
@@ -1895,15 +1978,15 @@ void nMSTask()
                         while((ioreq2 = (struct IOStdReq *) RemHead(&ncm->ncm_XFerQueue)))
                         {
                             ioreq2->io_Error = IOERR_ABORTED;
-                            ReplyMsg((struct Message *) ioreq2);
+                            nReplyIO(ncm->ncm_ClsBase, ioreq2);
                         }
                         Permit();
-                        ReplyMsg((struct Message *) ioreq);
+                        nReplyIO(ncm->ncm_ClsBase, ioreq);
                         break;
 
                     default:
                         ioreq->io_Error = IOERR_NOCMD;
-                        ReplyMsg((struct Message *) ioreq);
+                        nReplyIO(ncm->ncm_ClsBase, ioreq);
                         break;
                 }
             }
@@ -1916,6 +1999,9 @@ void nMSTask()
         /* Device ejected */
         ncm->ncm_UnitReady = FALSE;
         ncm->ncm_ChangeCount++;
+        /* its virtual drives go with it */
+        VDriveParentGone(ncm->ncm_VDriveParent);
+        ncm->ncm_VDriveUnits = 0;
         /* the filesystems add and take away their requests under Forbid()
            (devBeginIO), each from its own task */
         Forbid();
@@ -2206,13 +2292,13 @@ void nFreeMS(struct NepClassMS *ncm)
     while((ioreq = (struct IOStdReq *) GetMsg(&ncm->ncm_Unit.unit_MsgPort)))
     {
         ioreq->io_Error = IOERR_ABORTED;
-        ReplyMsg((struct Message *) ioreq);
+        nReplyIO(ncm->ncm_ClsBase, ioreq);
     }
     // and everything the dispatcher queued but never started
     while((ioreq = (struct IOStdReq *) RemHead(&ncm->ncm_XFerQueue)))
     {
         ioreq->io_Error = IOERR_ABORTED;
-        ReplyMsg((struct Message *) ioreq);
+        nReplyIO(ncm->ncm_ClsBase, ioreq);
     }
     Permit();
 
@@ -4454,7 +4540,8 @@ LONG nGetWriteProtect(struct NepClassMS *ncm)
 /* /// "nDosEntryMatches()" */
 /* TRUE if this DOS device entry's startup points at our usbscsi.device unit
    (i.e. anything the mounter - or a user-authored DOSDriver - created for
-   this medium). Caller holds a DOS device list lock. */
+   this medium), or at one of its virtual drives on usbscsivd.device. Caller
+   holds a DOS device list lock. */
 BOOL nDosEntryMatches(struct NepClassMS *ncm, struct DosList *list)
 {
     struct FileSysStartupMsg *fssm = BADDR(list->dol_misc.dol_handler.dol_Startup);
@@ -4469,6 +4556,10 @@ BOOL nDosEntryMatches(struct NepClassMS *ncm, struct DosList *list)
             char device[256];
             b2cstr(devname, device);
             if((ncm->ncm_UnitNo == fssm->fssm_Unit) && (strcmp(DEVNAME, device) == 0))
+            {
+                return(TRUE);
+            }
+            if((ncm->ncm_UnitNo == VDRIVE_PARENT(fssm->fssm_Unit)) && (strcmp(VDNAME, device) == 0))
             {
                 return(TRUE);
             }
