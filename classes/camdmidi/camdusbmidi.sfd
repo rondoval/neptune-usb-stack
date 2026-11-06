@@ -1,4 +1,4 @@
-==id $Id: camdusbmidi.sfd 6.3 $
+==id $Id: camdusbmidi.sfd 6.4 $
 * "camdusbmidi.usbclass"
 ==base _NepMidiBase
 ==basetype struct Library *

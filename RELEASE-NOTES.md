@@ -1,3 +1,43 @@
+# Release notes - Neptune 6.4
+
+Everything in this archive reports version **6.4**, followed by the CPU it was built for.
+
+**Upgrading from 6.3:** run the installer.
+
+## Emu68 SD cards in a USB card reader
+
+* An Emu68 SD card keeps its Amiga partitions inside *virtual drives*: partitions (MBR type
+  `0x76`, or Emu68's GPT type) that each hold a whole RDB disk. In a USB card reader, those
+  partitions now mount as they do under Emu68, with their own names. Each virtual drive is a
+  unit of `usbscsivd.device` (the reader's `usbscsi.device` unit × 10, plus 0-9), so HDToolBox
+  can partition it too: set its tooltype `SCSI_DEVICE_NAME=usbscsivd.device`.
+* Through the reader's own `usbscsi.device` unit, the virtual drives' blocks are read-only, so
+  nothing writes them by two routes.
+* Swapping the card and Eject cover the virtual drives' volumes too.
+
+## Safe eject
+
+* **An eject is refused while a file or drawer on the drive is open,** Directory Opus windows
+  included, and the requester names the volume. On PFS3 volumes it used to go ahead, and the
+  program holding the file could then hang when it closed it.
+* **No "BUSY" disk icons are left behind** after an eject on desktops such as Directory Opus 5.
+
+## Bug fixes
+
+* **Some USB 2.0 hubs** (WCH `1A86:809D`, found in combo adapters) work: they answer the check
+  after the switch to their faster multi-TT mode with no data, which Neptune took for a
+  failure. A hub whose switch really fails now keeps working in its single-TT mode.
+* **A replugged USB drive** whose volume had stayed mounted (unmount on removal off) came back as
+  a second volume, `UMSD1:` beside `UMSD0:`; it now takes the existing one back.
+* **A program that cancels a USB disk request** (`AbortIO()`) gets it back at once if the drive
+  has not started it, instead of after the drive has done it.
+* **USB CD/DVD drives on machines with the CD filesystem only in the Kickstart:** a disc
+  inserted after boot got a CD drive that could not start.
+* **Filesystems stored in a USB drive's RDB load in cases that failed before:** files with
+  debug information left in, some relocation formats, and drives with 1024- or 2048-byte
+  blocks. Such a partition used to get the filesystem from ROM instead, or none.
+* **A damaged RDB is no longer used:** its own checksum is checked now, like its other blocks'.
+
 # Release notes - Neptune 6.3
 
 Everything in this archive - `neptune.library`, all 30 class drivers, Neptune USB, USBEject

@@ -23,6 +23,9 @@ Neptune.
 - **Neptune USB** - a control panel for every connected device and class.
 - On PiStorm/Emu68, an optional **USB-in-ROM** kit: USB keyboard and mouse in the boot menu,
   booting from USB (see `ROM/ROM-ReadMe.md` in the archive).
+- **Emu68 SD cards in a USB card reader** - the Amiga partitions inside the card's virtual
+  drives mount as they do under Emu68, each virtual drive a unit of `usbscsivd.device`
+  (HDToolBox: `SCSI_DEVICE_NAME=usbscsivd.device`).
 
 The *host-controller driver* for your USB hardware is not included - see
 [Talking to your USB hardware](#talking-to-your-usb-hardware).
@@ -157,8 +160,9 @@ Each is `DEVS:USBClasses/<name>.usbclass`.
 - **USBList** - lists connected USB devices.
 - **USBErrorlog** - prints the stack's error log.
 - **USBEject** (optional, `SYS:WBStartup/`) - a Workbench **USB** menu with an *Eject* item
-  per drive: it flushes and unmounts the drive's volumes (refusing while files are open), then
-  stops the drive and says when it is safe to unplug.
+  per drive: it flushes and unmounts the drive's volumes (refusing while a file or drawer on
+  them is open, Directory Opus windows included), then stops the drive and says when it is safe
+  to unplug.
 - **Gadget tools** (optional, `SYS:Tools/`): `USBRadio`, `USBPencam`, `USBSonixcam`,
   `USBRocket`, `USBPowMan`, `USBUPS`, `USBVideo`.
 - **USBVideo** works in the Shell, or from its icon as a window: pick a camera and a mode,
@@ -184,7 +188,7 @@ Each is `DEVS:USBClasses/<name>.usbclass`.
 
 `neptune.library` **6.x** continues the numbering of the releases published as "Poseidon for
 AmigaOS", unrelated to Poseidon's own 4.x (Chris Hodges) and 5.x (AROS) lines. Every
-component carries the same version - **6.3** here; the classes and tools need
+component carries the same version - **6.4** here; the classes and tools need
 `neptune.library` 6 or newer.
 
 ## Licence and credits

@@ -88,7 +88,7 @@ flowchart TB
 | **Mount glue** | Builds one recipe per filesystem from config and calls the mounter | `nMountDrive`, `MSFsTable`, `nFillMountFS`, `nCDFSCaps` |
 | **Mounter** | Partition parsing, filesystem resolution, naming, node creation | `MountDrive`, `probe_unit`, `mnt_read_table`, `mnt_scan_rdb`, `mnt_scan_legacy`, `mnt_scan_cd`, `mnt_mount_volume`, `mnt_attach_fs` (`mounter/`) |
 | **Virtual drives** | `usbscsivd.device`: one unit per Emu68 virtual drive on a medium, forwarding to `usbscsi.device`; the write fence on the parent unit | `nh_VDrive`, `ncm_VDriveParent` (the unit's handle there), `nVDriveMediaChanged`, `nVDriveFence` (`dev.c`), `nReplyIO` (every reply), `VDriveRefresh` (`mounter/vdrive.c`), `VDriveWriteAllowed`, `VDriveScsiAllowed` (`mounter/vdrive_fence.c`), `VDriveComplete` (`mounter/vdrive_forward.c`) |
-| **Unmount and eject** | Reactive unmount of a gone unit; verified device-wide eject | `nUnmountPartition`, `nRemoveDosNode`, `nSafeEjectDevice`, `nInhibitAll`, `nQuiesceDevice` |
+| **Unmount and eject** | Reactive unmount of a gone unit; verified device-wide eject | `nUnmountPartition`, `nDetachDosNode`, `nRemoveDosNode`, `nSafeEjectDevice`, `nDetachEjectNodes`, `nInhibitAll`, `nVolumeParked`, `nQuiesceDevice` |
 | **Config and GUI** | Per-device and per-LUN IFF chunks, reload on prefs change, MUI window | `ClsDevCfg`, `ClsUnitCfg`, `nLoadBindingConfig`, `nReapplyConfig`, `nStoreConfig`, `nGUITask`, `AutoDetectMaxTransfer` |
 
 **Units outlive bindings.** A unit is freed only in `libExpunge`; a re-plugged device is matched
@@ -218,9 +218,11 @@ size), takes the synchronous path. `nGetGeometry` combines READ CAPACITY and the
 pages; `nFakeGeometry` builds a CHS layout by factoring the block count when the device gives
 nothing usable.
 
-`devAbortIO` removes a request still in the FIFO, or flags its UAS tag (`ut_AbortReq` +
-`nWakeTransport`) so it completes with `IOERR_ABORTED` through the normal reap; a request being
-executed synchronously cannot be aborted. `CMD_RESET` and `CMD_FLUSH` drain the engine and fail
+`devAbortIO` removes a request not yet started, from the unit port or the FIFO, or flags its UAS
+tag (`ut_AbortReq` + `nWakeTransport`) so it completes with `IOERR_ABORTED` through the normal
+reap; a request being executed synchronously cannot be aborted. A request stays on the port until
+the unit task next wakes, which on BOT is only after the command it is executing, so the port is
+where most queued requests are found. `CMD_RESET` and `CMD_FLUSH` drain the engine and fail
 everything queued.
 
 ### 5.3 The SCSI layer and learned quirks
@@ -438,9 +440,9 @@ flowchart TD
   never is; and a buffer that fails the mask goes through the filesystem's own buffers: fat95 fell
   back to its cache, one cluster at a time, FFS reads 512 bytes at a time, and PFS3, whose pool
   buffers can never be 64-byte aligned, raises a requester on every such read and stops responding.
-- **Auto-unmount** (`nUnmountPartition`) runs from the removable task when a unit is gone: it sends
-  inhibit and die blind to every handler riding the unit, removes the DOS node and unlinks any stale
-  boot node. Nobody is left to veto. A handler rides the unit if its node names `usbscsi.device` and
+- **Auto-unmount** (`nUnmountPartition`) runs from the removable task when a unit is gone: it takes
+  every DOS node riding the unit out of the DOS list, sends inhibit and die blind to its handler and
+  unlinks any stale boot node. Nobody is left to veto. A handler rides the unit if its node names `usbscsi.device` and
   the unit, or `usbscsivd.device` and one of the unit's virtual drives (`nDosEntryMatches`); safe
   eject collects by the same test.
 
@@ -452,13 +454,26 @@ covering extra LUNs and extra storage interfaces.
 
 - **Latch first.** `ncm_Ejected` is set on all of the device's units, so the removable task cannot
   mount behind the operation. It vetoes only mounting; change counts are still consumed.
-- **All or nothing.** Every DOS node riding one of the units is collected under one device-list
-  read lock, released before any packet is sent. Each handler gets a flush and a checked inhibit.
-  One refusal re-enables the handlers already inhibited, clears the latch and returns
-  `SAFEEJECT_BUSY` naming the volume. A handler that cannot inhibit proceeds after the flush.
-- **Then the point of no return:** die and remove each node, then per unit synchronize cache,
-  allow medium removal and stop, through a `usbscsi.device` request of the eject's own (the tunnel
-  belongs to the removable task). Stop goes through the unit task, so it gets the UAS drain.
+- **All or nothing.** Every DOS node riding one of the units is collected and taken out of the DOS
+  list under one write lock, released before any packet is sent. Each handler gets a flush and a
+  checked inhibit. One refusal puts the nodes back, then re-enables the handlers already inhibited,
+  clears the latch and returns `SAFEEJECT_BUSY` naming the volume. A handler that cannot inhibit
+  proceeds after the flush.
+- **An inhibit that parks locks is a refusal too** (`nVolumeParked`). PFS3 does not refuse an
+  inhibit with files or locks open: it takes the volume away as for a removed disk and parks the
+  locks in the volume node's `dol_LockList`. Told to die, it exits with them, and their next use
+  (a `Close()`, an `UnLock()`) goes to a port that is gone. So the volume each handler had mounted
+  is noted before its inhibit (`nBusyName`), and still being listed with locks parked afterwards
+  vetoes the eject; releasing the inhibit gives the handler its volume and locks back.
+- **Nodes leave the DOS list before the inhibit,** here and in auto-unmount. An inhibit takes the
+  volume away, and a desktop rescans its disk icons when a volume goes. A device it still finds
+  answers `ACTION_DISK_INFO` with `ID_BUSY` and gets a "BUSY" icon (Directory Opus 5 shows one),
+  which stays after the node is gone: removing a device changes no volume, so nothing makes the
+  desktop look again.
+- **Then the point of no return:** each handler is told to die and its node finished, then per
+  unit synchronize cache, allow medium removal and stop, through a `usbscsi.device` request of the
+  eject's own (the tunnel belongs to the removable task). Stop goes through the unit task, so it
+  gets the UAS drain.
 - The library disables the hub port afterwards; the class never touches the bus.
 
 ### 5.10 Suspend and resume
@@ -547,7 +562,7 @@ Each rule exists because breaking it caused, or would cause, a real failure.
     without sense is exactly what a bus reset produces; stale bytes misclassify a warm boot, and
     treating UNIT ATTENTION as "no medium" drops the drive from the boot menu on every reboot.
 15. **Never send a DOS packet while holding the DOS list lock.** An inhibit may need that list.
-    Safe eject collects under the lock and acts after releasing it.
+    Safe eject collects and detaches under the lock and acts after releasing it.
 16. **`usbscsi.device` stays inside the class.** Its units *are* the class's bindings (`NepClassMS`
     embeds `struct Unit`), and unit lifetime, the open gate and the request queue all live there.
 

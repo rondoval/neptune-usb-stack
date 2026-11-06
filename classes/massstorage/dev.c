@@ -321,11 +321,33 @@ void (devBeginIO)(struct IOStdReq * ioreq asm("a1"), struct NepMSDevBase * base 
     
 }
 
+/**
+ * nUnqueue() - Take a request off a list it may be waiting on.
+ * @list: the unit port's mp_MsgList or ncm_XFerQueue.
+ * @ioreq: the request to find.
+ *
+ * The caller holds Forbid(): the unit task moves requests between the two
+ * lists under it.
+ *
+ * Return: TRUE if @ioreq was on @list and has been removed.
+ */
+static BOOL nUnqueue(struct List *list, struct IOStdReq *ioreq)
+{
+    for(struct Node *node = list->lh_Head; node->ln_Succ; node = node->ln_Succ)
+    {
+        if(node == &ioreq->io_Message.mn_Node)
+        {
+            Remove(node);
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 LONG (devAbortIO)(struct IOStdReq * ioreq asm("a1"), struct NepMSDevBase * base asm("a6"))
 {
 
     struct NepClassMS *unit = (struct NepClassMS *) ioreq->io_Unit;
-    struct IOStdReq *iocmp;
 
     KPRINTF(5, ("devAbortIO ioreq: 0x%08lx\n", ioreq));
 
@@ -333,19 +355,16 @@ LONG (devAbortIO)(struct IOStdReq * ioreq asm("a1"), struct NepMSDevBase * base 
     if(ioreq->io_Message.mn_Node.ln_Type == NT_MESSAGE)
     {
         Forbid(); /* the unit task owns these structures */
-        /* Still queued? Pull it out and reply it ourselves. */
-        iocmp = (struct IOStdReq *) unit->ncm_XFerQueue.lh_Head;
-        while(iocmp->io_Message.mn_Node.ln_Succ)
+        /* Not started yet? Pull it out and reply it ourselves. A request
+           stays on the unit port until the task next wakes, which on BOT is
+           only after the command it is executing completes. */
+        if(nUnqueue(&unit->ncm_Unit.unit_MsgPort.mp_MsgList, ioreq) ||
+           nUnqueue(&unit->ncm_XFerQueue, ioreq))
         {
-            if(iocmp == ioreq)
-            {
-                Remove((struct Node *) ioreq);
-                ioreq->io_Error = IOERR_ABORTED;
-                nReplyIO(base->np_ClsBase, ioreq);
-                Permit();
-                return(0);
-            }
-            iocmp = (struct IOStdReq *) iocmp->io_Message.mn_Node.ln_Succ;
+            ioreq->io_Error = IOERR_ABORTED;
+            nReplyIO(base->np_ClsBase, ioreq);
+            Permit();
+            return(0);
         }
         /* In flight on a UAS tag? Flag it and poke the task - the pipes are
            aborted in the task's own context and the request completes with

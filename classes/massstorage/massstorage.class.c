@@ -4339,28 +4339,46 @@ BOOL nOpenDOS(struct NepMSBase *nh)
 #undef DOSBase
 #define	DOSBase	nh->nh_DOSBase
 
+/* /// "nDetachDosNode()" */
+/**
+ * nDetachDosNode() - Take a DeviceNode out of the DOS list.
+ * @nh: the class base.
+ * @node: the node; its handler is still running.
+ *
+ * Done before the handler is inhibited. Inhibiting takes the volume away,
+ * which makes a desktop rescan its disk icons; a device it still finds then
+ * answers ACTION_DISK_INFO with ID_BUSY and gets a "BUSY" icon. Taking the
+ * node away later changes no volume, so nothing makes the desktop look again
+ * and the icon stays.
+ *
+ * Return: TRUE if the node was in the list. FALSE means another task has
+ * already taken it, and the handler is that task's to shut down.
+ */
+static BOOL nDetachDosNode(struct NepMSBase *nh, struct DeviceNode *node)
+{
+    LockDosList(LDF_DEVICES | LDF_WRITE);
+    BOOL detached = RemDosEntry((struct DosList *) node);
+    UnLockDosList(LDF_DEVICES | LDF_WRITE);
+    return detached;
+}
+/* \\\ */
+
 /* /// "nRemoveDosNode()" */
-/* Rip one DeviceNode out of the DOS list (log, RemDosEntry, stale-BootNode
-   unlink). The handler packets are the caller's business: the legacy path
-   fires INHIBIT+DIE blind, the safe-eject path has already negotiated them. */
+/**
+ * nRemoveDosNode() - Finish the unmount of a detached DeviceNode.
+ * @ncm: the unit the node rides on.
+ * @node: the node, out of the DOS list (nDetachDosNode()), its handler told
+ *        to die.
+ *
+ * Logs the unmount and unlinks the node's stale BootNode, if any.
+ */
 void nRemoveDosNode(struct NepClassMS *ncm, struct DeviceNode *node)
 {
     struct NepMSBase *nh = ncm->ncm_ClsBase;
 
-    /* A BSTR length byte reaches 255; nDosEntryMatches() also matches
-       user-authored DOSDrivers whose names are longer than the mounter's own
-       (<= 30), so size for the worst case (matches device[256] there). */
-    char partname[256];
-    UBYTE *bstr = (UBYTE *) BADDR(node->dn_Name);
-    b2cstr(bstr, partname);
     psdAddErrorMsg(RETURN_OK, (STRPTR) libname,
-                   "Unmounting partition %s...",
-                   partname);
-    if(LockDosList(LDF_DEVICES | LDF_WRITE))
-    {
-        RemDosEntry((struct DosList *) node);
-        UnLockDosList(LDF_DEVICES | LDF_WRITE);
-    }
+                   "Unmounting partition %b...",
+                   node->dn_Name);
     /* drop a stale BootNode (pre-DOS boot mounts) so the name stays reusable;
        the node itself is expansion-owned, so just unlink it. ExpansionBase is
        the removable task's - guard for the (theoretical) window after nFreeRT. */
@@ -4383,8 +4401,9 @@ void nRemoveDosNode(struct NepClassMS *ncm, struct DeviceNode *node)
 /* \\\ */
 
 /* /// "nUnmountPartition()" */
-/* Legacy reactive teardown (device already gone): packets fired blind,
-   results deliberately ignored - there is nobody left to veto for. */
+/* Legacy reactive teardown (device already gone): each node leaves the DOS
+   list first (nDetachDosNode()), then its packets are fired blind, results
+   deliberately ignored - there is nobody left to veto for. */
 void nUnmountPartition(struct NepClassMS *ncm)
 {
     struct NepMSBase *nh = ncm->ncm_ClsBase;
@@ -4401,13 +4420,17 @@ void nUnmountPartition(struct NepClassMS *ncm)
         {
             break;
         }
+        oldnode = node;
+        if(!nDetachDosNode(nh, node))
+        {
+            continue;   /* a safe eject took it first */
+        }
         if(node->dn_Task)   /* a never-accessed handler has no process yet */
         {
             DoPkt(node->dn_Task, ACTION_INHIBIT, DOSTRUE, 0, 0, 0, 0);
             DoPkt(node->dn_Task, ACTION_DIE, 0, 0, 0, 0, 0);
         }
         nRemoveDosNode(ncm, node);
-        oldnode = node;
     }
 }
 /* \\\ */
@@ -4598,37 +4621,44 @@ struct DeviceNode * FindMatchingDevice(struct NepClassMS *ncm)
 /* \\\ */
 
 /* /// "nBusyName()" */
-/* Human-readable name of the thing vetoing an eject: the mounted volume if
-   the handler has one ("PenDrive (UMSD0:)"), else the bare DOS device name.
-   Locks only - never sends packets (the handler just vetoed one). */
-void nBusyName(struct NepClassMS *ncm, struct DeviceNode *node, STRPTR buf, ULONG len)
+/**
+ * nBusyName() - Name what a handler serves, for an eject's veto message.
+ * @ncm: the unit the node rides on.
+ * @node: the DOS device node.
+ * @buf: where the name goes: the mounted volume if the handler has one
+ *       ("PenDrive (UMSD0:)"), else the bare DOS device name.
+ * @len: size of @buf.
+ *
+ * Called before the handler is inhibited, which clears the volume's dol_Task.
+ * Locks only, never sends a packet.
+ *
+ * Return: the handler's mounted volume node, or NULL.
+ */
+struct DosList * nBusyName(struct NepClassMS *ncm, struct DeviceNode *node, STRPTR buf, ULONG len)
 {
     struct NepMSBase *nh = ncm->ncm_ClsBase;
-    char devname[256];
-    char volname[256];
-    UBYTE *bstr = (UBYTE *) BADDR(node->dn_Name);
-    b2cstr(bstr, devname);
-    volname[0] = 0;
-    struct DosList *list;
-    if((list = LockDosList(LDF_VOLUMES | LDF_READ)))
+    struct DosList *volume = NULL;
+    struct DosList *list = LockDosList(LDF_VOLUMES | LDF_READ);
+    while((list = NextDosEntry(list, LDF_VOLUMES | LDF_READ)))
     {
-        while((list = NextDosEntry(list, LDF_VOLUMES | LDF_READ)))
+        if(list->dol_Task == node->dn_Task)
         {
-            if(list->dol_Task == node->dn_Task)
-            {
-                UBYTE *vstr = (UBYTE *) BADDR(list->dol_Name);
-                b2cstr(vstr, volname);
-                break;
-            }
+            volume = list;
+            break;
         }
-        UnLockDosList(LDF_VOLUMES | LDF_READ);
     }
-    if(volname[0])
+    /* %b prints a BSTR in place (RawDoFmt(), V36); the volume's name is read
+       before the lock goes, since the node may go with it */
+    if(volume)
     {
-        psdSafeRawDoFmt(buf, len, "%s (%s:)", volname, devname);
-    } else {
-        psdSafeRawDoFmt(buf, len, "%s:", devname);
+        psdSafeRawDoFmt(buf, len, "%b (%b:)", volume->dol_Name, node->dn_Name);
     }
+    else
+    {
+        psdSafeRawDoFmt(buf, len, "%b:", node->dn_Name);
+    }
+    UnLockDosList(LDF_VOLUMES | LDF_READ);
+    return volume;
 }
 /* \\\ */
 
@@ -4700,88 +4730,173 @@ static struct NepClassMS * nLUNForDosEntry(struct NepMSBase *nh, struct PsdDevic
 }
 /* \\\ */
 
-/* /// "nCollectEjectNodes()" */
-/* Gather every DOS device node riding one of the device's units under ONE read
-   lock - and never send a packet while holding it (an inhibit may need the very
-   list we would be locking). Returns the number collected, or -1 if there were
-   more than max: all-or-nothing cannot be promised beyond the array. */
-static LONG nCollectEjectNodes(struct NepMSBase *nh, struct PsdDevice *pd,
-                               struct SafeEjectNode *nodes, LONG max)
+/* /// "nDetachEjectNodes()" */
+/**
+ * nDetachEjectNodes() - Take every DOS device node of the device out of the
+ * DOS list.
+ * @nh: the class base.
+ * @pd: the device.
+ * @nodes: where the nodes and their units go.
+ * @max: room in @nodes.
+ *
+ * Collects the nodes riding one of the device's units and removes them, under
+ * one write lock and without sending a packet while holding it (an inhibit may
+ * need the list). They leave the list before the inhibit for the desktop's
+ * sake (nDetachDosNode()); nAttachEjectNodes() puts them back on a veto.
+ *
+ * Return: the number of nodes, or -1 with none removed if there were more
+ * than @max: all-or-nothing cannot be promised beyond the array.
+ */
+static LONG nDetachEjectNodes(struct NepMSBase *nh, struct PsdDevice *pd,
+                              struct SafeEjectNode *nodes, LONG max)
 {
     LONG count = 0;
-    struct DosList *list;
+    struct DosList *list = LockDosList(LDF_DEVICES | LDF_WRITE);
 
-    if((list = LockDosList(LDF_DEVICES | LDF_READ)))
+    while((list = NextDosEntry(list, LDF_DEVICES | LDF_WRITE)))
     {
-        while((list = NextDosEntry(list, LDF_DEVICES | LDF_READ)))
+        struct NepClassMS *lun = nLUNForDosEntry(nh, pd, list);
+        if(!lun)
         {
-            struct NepClassMS *lun = nLUNForDosEntry(nh, pd, list);
-            if(!lun)
-            {
-                continue;
-            }
-            if(count == max)
-            {
-                count = -1;
-                break;
-            }
-            nodes[count].sen_Node = (struct DeviceNode *) list;
-            nodes[count].sen_LUN = lun;
-            nodes[count].sen_Inhibited = FALSE;
-            count++;
+            continue;
         }
-        UnLockDosList(LDF_DEVICES | LDF_READ);
+        if(count == max)
+        {
+            count = -1;
+            break;
+        }
+        nodes[count].sen_Node = (struct DeviceNode *) list;
+        nodes[count].sen_LUN = lun;
+        nodes[count].sen_Inhibited = FALSE;
+        count++;
     }
+    /* removed after the walk: NextDosEntry() follows the current entry */
+    for(LONG idx = 0; idx < count; idx++)
+    {
+        RemDosEntry((struct DosList *) nodes[idx].sen_Node);
+    }
+    UnLockDosList(LDF_DEVICES | LDF_WRITE);
     if(count < 0)
     {
         psdAddErrorMsg(RETURN_ERROR, (STRPTR) libname,
                        "Eject: more than %ld partitions on one device?!",
                        (ULONG) max);
     }
-    return(count);
+    return count;
+}
+/* \\\ */
+
+/* /// "nAttachEjectNodes()" */
+/**
+ * nAttachEjectNodes() - Put the nodes nDetachEjectNodes() took back into the
+ * DOS list, after a veto.
+ * @nh: the class base.
+ * @nodes: the nodes.
+ * @count: how many.
+ */
+static void nAttachEjectNodes(struct NepMSBase *nh, struct SafeEjectNode *nodes, LONG count)
+{
+    /* last first: AddDosEntry() puts each at the head of the list, so they
+       come back in the order they were found */
+    for(LONG idx = count - 1; idx >= 0; idx--)
+    {
+        struct DeviceNode *node = nodes[idx].sen_Node;
+        if(!AddDosEntry((struct DosList *) node))
+        {
+            /* the name was taken meanwhile: the handler runs on, its volume
+               is still reachable by name */
+            psdAddErrorMsg(RETURN_ERROR, (STRPTR) libname,
+                           "Eject: could not put %b: back into the DOS list.",
+                           node->dn_Name);
+        }
+    }
+}
+/* \\\ */
+
+/* /// "nVolumeParked()" */
+/**
+ * nVolumeParked() - Tell whether an inhibit left a volume in the DOS list
+ * with locks on it.
+ * @nh: the class base.
+ * @volume: the volume the handler had mounted before the inhibit, or NULL.
+ *
+ * A handler inhibited with files or locks open need not refuse: PFS3 takes the
+ * volume away as if the disk had been removed and parks the locks in its
+ * dol_LockList, to take them back when the disk returns. Told to die then, it
+ * exits with them, and their next use (a Close(), an UnLock()) goes to a port
+ * that is gone. @volume is only compared until it is found in the list: a
+ * volume with nothing open is freed by the inhibit.
+ *
+ * Return: TRUE if @volume is still listed with locks parked on it.
+ */
+static BOOL nVolumeParked(struct NepMSBase *nh, struct DosList *volume)
+{
+    if(!volume)
+    {
+        return FALSE;
+    }
+    BOOL parked = FALSE;
+    struct DosList *list = LockDosList(LDF_VOLUMES | LDF_READ);
+    while((list = NextDosEntry(list, LDF_VOLUMES | LDF_READ)))
+    {
+        if(list == volume)
+        {
+            parked = list->dol_misc.dol_volume.dol_LockList != 0;
+            break;
+        }
+    }
+    UnLockDosList(LDF_VOLUMES | LDF_READ);
+    return parked;
 }
 /* \\\ */
 
 /* /// "nInhibitAll()" */
-/* Flush and inhibit every collected handler, all-or-nothing: on a veto the
-   ones already inhibited are released again and busybuf names the offender.
-   The caller must be a Process - these are DoPkt()s. */
+/* Flush and inhibit every detached node's handler, stopping at the first
+   veto - a refused inhibit, or one that left the volume's locks parked
+   (nVolumeParked()): busybuf then names the offender, and the ones inhibited
+   are left for nReleaseAll(), once the nodes are back in the DOS list. The
+   caller must be a Process - these are DoPkt()s. */
 static IPTR nInhibitAll(struct NepMSBase *nh, struct SafeEjectNode *nodes, LONG count,
                         STRPTR busybuf, ULONG busybuflen)
 {
-    LONG idx;
-
-    for(idx = 0; idx < count; idx++)
+    for(LONG idx = 0; idx < count; idx++)
     {
         struct DeviceNode *node = nodes[idx].sen_Node;
         if(!node->dn_Task)   /* never-accessed handler: no process, nothing to flush */
         {
             continue;
         }
+        char busyname[64];
+        struct DosList *volume = nBusyName(nodes[idx].sen_LUN, node, busyname, sizeof(busyname));
         DoPkt(node->dn_Task, ACTION_FLUSH, 0, 0, 0, 0, 0);
+        LONG err;
         if(DoPkt(node->dn_Task, ACTION_INHIBIT, DOSTRUE, 0, 0, 0, 0) != DOSFALSE)
         {
             nodes[idx].sen_Inhibited = TRUE;
-            continue;
+            if(!nVolumeParked(nh, volume))
+            {
+                continue;
+            }
+            err = ERROR_OBJECT_IN_USE;   /* in use all the same */
         }
-        LONG err = IoErr();
-        if(err == ERROR_DEVICE_NOT_MOUNTED)   /* handler never mounted a volume */
+        else
         {
-            continue;
+            err = IoErr();
+            if(err == ERROR_DEVICE_NOT_MOUNTED)   /* handler never mounted a volume */
+            {
+                continue;
+            }
+            if(err == ERROR_ACTION_NOT_KNOWN)
+            {
+                /* handler cannot inhibit (some CDFS-class ones); the flush above
+                   already ran, treating this as a veto would make such volumes
+                   permanently un-ejectable */
+                psdAddErrorMsg(RETURN_WARN, (STRPTR) libname,
+                               "Eject: a filesystem does not support Inhibit(), proceeding after flush.");
+                continue;
+            }
         }
-        if(err == ERROR_ACTION_NOT_KNOWN)
-        {
-            /* handler cannot inhibit (some CDFS-class ones); the flush above
-               already ran, treating this as a veto would make such volumes
-               permanently un-ejectable */
-            psdAddErrorMsg(RETURN_WARN, (STRPTR) libname,
-                           "Eject: a filesystem does not support Inhibit(), proceeding after flush.");
-            continue;
-        }
-        /* the normal veto (ERROR_OBJECT_IN_USE): report, then release the
-           handlers before this one (this one never got inhibited) */
-        char busyname[64];
-        nBusyName(nodes[idx].sen_LUN, node, busyname, sizeof(busyname));
+        /* the veto: refused (normally ERROR_OBJECT_IN_USE), or locks parked */
         if(busybuf && busybuflen)
         {
             strncpy(busybuf, busyname, busybuflen - 1);
@@ -4790,16 +4905,30 @@ static IPTR nInhibitAll(struct NepMSBase *nh, struct SafeEjectNode *nodes, LONG 
         psdAddErrorMsg(RETURN_WARN, (STRPTR) libname,
                        "Eject vetoed: %s is still in use (error %ld).",
                        busyname, err);
-        while(idx--)
-        {
-            if(nodes[idx].sen_Inhibited)
-            {
-                DoPkt(nodes[idx].sen_Node->dn_Task, ACTION_INHIBIT, DOSFALSE, 0, 0, 0, 0);
-            }
-        }
-        return(SAFEEJECT_BUSY);
+        return SAFEEJECT_BUSY;
     }
-    return(SAFEEJECT_OK);
+    return SAFEEJECT_OK;
+}
+/* \\\ */
+
+/* /// "nReleaseAll()" */
+/**
+ * nReleaseAll() - Lift the inhibits nInhibitAll() set, after a veto.
+ * @nh: the class base.
+ * @nodes: the nodes.
+ * @count: how many.
+ *
+ * The caller must be a Process: these are DoPkt()s.
+ */
+static void nReleaseAll(struct NepMSBase *nh, struct SafeEjectNode *nodes, LONG count)
+{
+    for(LONG idx = 0; idx < count; idx++)
+    {
+        if(nodes[idx].sen_Inhibited)
+        {
+            DoPkt(nodes[idx].sen_Node->dn_Task, ACTION_INHIBIT, DOSFALSE, 0, 0, 0, 0);
+        }
+    }
 }
 /* \\\ */
 
@@ -4897,24 +5026,30 @@ IPTR nSafeEjectDevice(struct NepMSBase *nh, struct NepClassMS *ncm, STRPTR busyb
     }
 
     /* Latch first: the removable task's 3s tick must not (re)mount anything
-       between the collection below and the port disable at the end. Rolled
-       back on any failure. */
+       between the detach below and the port disable at the end. Rolled back
+       on any failure, after the nodes are back in the DOS list. */
     nSetEjectLatch(nh, pd, TRUE);
 
     struct SafeEjectNode nodes[NEJECT_MAXNODES];
-    LONG count = nCollectEjectNodes(nh, pd, nodes, NEJECT_MAXNODES);
-    IPTR res = (count < 0) ? SAFEEJECT_FAIL
-                           : nInhibitAll(nh, nodes, count, busybuf, busybuflen);
+    LONG count = nDetachEjectNodes(nh, pd, nodes, NEJECT_MAXNODES);
+    if(count < 0)
+    {
+        nSetEjectLatch(nh, pd, FALSE);
+        return(SAFEEJECT_FAIL);
+    }
+    IPTR res = nInhibitAll(nh, nodes, count, busybuf, busybuflen);
     if(res != SAFEEJECT_OK)
     {
+        /* undone in reverse: no volume comes back without its device */
+        nAttachEjectNodes(nh, nodes, count);
+        nReleaseAll(nh, nodes, count);
         nSetEjectLatch(nh, pd, FALSE);
         return(res);
     }
 
-    /* Point of no return: the data is safe, so shut the handlers down and drop
-       the DOS nodes, results ignored from here on. */
-    LONG idx;
-    for(idx = 0; idx < count; idx++)
+    /* Point of no return: the data is safe, so shut the handlers down and
+       finish the nodes, results ignored from here on. */
+    for(LONG idx = 0; idx < count; idx++)
     {
         struct DeviceNode *node = nodes[idx].sen_Node;
         if(node->dn_Task)
