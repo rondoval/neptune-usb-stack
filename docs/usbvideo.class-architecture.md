@@ -94,7 +94,7 @@ flowchart TB
 | **Class glue** | Init/expunge, method dispatch, bind/release, the subtask loop | `libInit`, `usbDoMethodA`, `usbForceInterfaceBinding`, `usbReleaseInterfaceBinding`, `nVideoTask`, `nAllocVideo`, `nFreeVideo` |
 | **Function model** | Descriptors to the immutable model; the payload-format table; mode lookup. Pure: no I/O, no allocation | `uvc_desc.c`: `UvcFunction`, `UvcPayloads[]`, `uvcAddControlDesc`, `uvcAddStreamDesc`, `uvcFindFormat`, `uvcSnapInterval` |
 | **Units** | One unit per capture stream; attach to and detach from a binding | `NepVideoStream`, `nAttachUnits`, `nOwnUnit`, `nSpareUnit`, `nDetachUnits` |
-| **Control plane** | The one class-request primitive, raw pass-through, negotiation, the H.264 unit | `uvc_ctrl.c`: `uvcRequest`, `uvcPassRequest`, `uvcNegotiate`, `uvcNegotiateEmbedded` |
+| **Control plane** | The one class-request primitive, raw pass-through, negotiation, the H.264 unit, key frame requests | `uvc_ctrl.c`: `uvcRequest`, `uvcPassRequest`, `uvcNegotiate`, `uvcNegotiateEmbedded`, `uvcKeyFrame` |
 | **Controls by name** | Table of standard camera-terminal and processing-unit controls; query, list, write | `uvc_controls.c`: `UvcControls[]`, `uvcControlQuery`, `uvcControlLocate`, `uvcControlWrite` |
 | **Status plane** | One transfer waiting at the status endpoint; one event queue per binding | `uvc_status.c`: `UvcStatus`, `uvcStatusDone`, `uvcEventWait`, `uvcEventDeliver` |
 | **Stream lifecycle** | Alternate choice, commit, start/stop for both transports | `uvc_stream.c`: `uvcFindAlternate`, `uvcStart`, `uvcStop`, `uvcAbortReads` |
@@ -183,13 +183,14 @@ is preference order**: a request naming no format gets the camera's format of th
 |---|---|---|
 | MJPEG | 0x06 / 0x07 | built |
 | Uncompressed (any FourCC GUID: YUY2, NV12, ...) | 0x04 / 0x05 | built |
-| Frame-based (GUID; in practice H.264) | 0x10 / 0x11 | built, never run |
+| Frame-based (GUID; in practice H.264, or H.265 - `HEVC` listed as `H265`) | 0x10 / 0x11 | built, never run |
 | H.264 (UVC 1.5) | 0x13 / 0x14 | built, never run |
 | VP8 (three flag bytes) | 0x16 / 0x17 | built, never run |
 | H.264 inside MJPEG (twin of the MJPEG format) | none | built (§5.6) |
 
-A GUID-named format is streamable only if the GUID stands for a FourCC (four characters plus the
-fixed twelve bytes of Uncompressed Payload 1.5, table 2-1). A format without a row is recorded
+A GUID-named format is streamable only if the GUID stands for a FourCC (four printable characters
+plus the fixed twelve bytes of Uncompressed Payload 1.5, table 2-1; a Direct3D format's GUID has
+those twelve bytes behind a number, and is not one). A format without a row is recorded
 as present but not streamable. Adding a payload is adding a row; nothing else changes.
 
 ### 5.2 Units
@@ -277,6 +278,18 @@ Reads stay queued; the one being filled returns to the queue head. **Close while
 `CloseDevice` (under `Forbid()`, no USB traffic) replies the unit's reads and event waits and
 signals the subtask, which stops the orphaned stream. **Unplug**: the release stops every stream,
 replies reads and queued commands with `UVERR_GONE` and leaves the units camera-less.
+
+**A key frame on request** (`NSCMD_UV_KEYFRAME`, `uvcKeyFrame`, on the subtask): the mode's row
+says how it is asked for (`up_KeyFrame`), and what the camera declares decides whether it can be.
+The command does not wait for the frame; without a way it answers `UVERR_NOCONTROL`.
+
+| Row | Request |
+|---|---|
+| MJPEG, uncompressed (`UPKF_NONE`) | none: every frame stands alone |
+| Frame-based (`UPKF_STREAM`) | Generate Key Frame (VS 0x07) to the streaming interface, if the format's row of the input header's bmaControls has D4 (`ufo_Controls`) |
+| H.264 (UVC 1.5), VP8 (`UPKF_ENCODER`) | the Encoding Unit's sync frame control (EU 0x0b, type 1: IDR or intra), if the unit on the stream's path (`uvcPathEntity`) has it at run time; else as frame-based |
+| H.264 inside MJPEG (`UPKF_UVCX`) | the H.264 unit's picture type control: a key frame with new parameter sets |
+
 
 ### 5.5 Frame assembly
 
@@ -449,7 +462,7 @@ Details: [uvc/notes/vhi-notes.md](uvc/notes/vhi-notes.md).
   of `VHI_YUV_422` without arithmetic (never run).
 
 **Tools**: `USBVideo` is the user tool: in the Shell it gives info and modes, and records H.264,
-MJPEG, YUY2 or NV12 into Matroska files; from its icon or with `GUI` it is a MUI window (`tools/usbvideo_gui.c`, MUI opened at run time); with `PREVIEW` it shows the stream without
+H.265, MJPEG, YUY2 or NV12 into Matroska files; from its icon or with `GUI` it is a MUI window (`tools/usbvideo_gui.c`, MUI opened at run time); with `PREVIEW` it shows the stream without
 MUI. `USBVideoTest` is the test bench, built but not shipped (each test ends in PASS or FAIL). Both
 use three modules, each above the ones before it:
 
@@ -457,7 +470,7 @@ use three modules, each above the ones before it:
   key frame request), both loops over the reads (the synchronous `uvcNextFrame`, and the reads a
   loop of its own drives), what a frame's bytes hold.
 - `tools/uvc_record.c`: the recording into Matroska files through `tools/mkv` (the mkv-writer
-  submodule), including the H.264 key-frame wait. Its owner gives it the frames: the Shell tool's
+  submodule), including the key-frame wait of H.264 and H.265. Its owner gives it the frames: the Shell tool's
   loop, or the stream process.
 - `tools/uvc_preview.c`: the stream process, with the videocodec session and the window.
 
@@ -467,10 +480,14 @@ tells how many the camera has. `vhi/mjpegdht.h` (the standard Huffman tables, fr
 shared with the VHI driver.
 
 **The stream process** (`tools/uvc_preview.c`) runs a camera for the tools: reads, a videocodec
-session, preview window, a recording. Pixels stay out of the class; this is where they are. MJPEG and
-H.264 go to a decoder session, YUY2 and NV12 to a converter session (`VCK_Converter`: pictures in,
-pictures out), one table (`PreviewPaths`) saying which; the GUI asks it (`uvpCanPreview`) to mark
-the formats with no picture. The reasons, because each guards a failure:
+session, preview window, a recording. Pixels stay out of the class; this is where they are. MJPEG,
+H.264 and H.265 go to a decoder session, YUY2 and NV12 to a converter session (`VCK_Converter`:
+pictures in, pictures out), one table (`PreviewPaths`) saying which; the GUI asks it
+(`uvpCanPreview`) to mark the formats with no picture. An H.265 decoder (rpivid.codec) writes only
+column pictures: videocodec.library 0.5 puts the VideoCore converter behind it, and lists what
+that converter adds in the decoder row's `ChainOutputFormats`, so the formats a session offers
+(`sessionFormats`) are the row's own and those; with an older library there are none, and the
+window says "No preview". The reasons, because each guards a failure:
 
 - **A process of its own.** MUI blocks in the layer lock while a menu is held or a window dragged.
   In the same task that would stop reads coming back, and each menu would be a hole in an H.264
@@ -503,16 +520,17 @@ the formats with no picture. The reasons, because each guards a failure:
   standard tables or a comment of that length overwrite the room and the frame's own SOI
   (`jpegFill`). Files are written before that, from the frame as it came. A frame with no
   picture or no EOI does not reach the decoder.
-- **H.264 goes straight to the decoder.** It gives nothing until its first key frame, by itself.
-  After a hole its pictures are rubbish until the next one, so the first frame after a hole asks the
-  camera for a key frame (`UVCX_PICTURE_TYPE_CONTROL`), if it has the H.264 unit; the C930e sends it
-  two frames later, whatever its key interval.
-- **A recording is Matroska**, of H.264, MJPEG, YUY2 or NV12, and nothing else is saved: no single
+- **H.264 and H.265 go straight to the decoder.** It gives nothing until its first key frame, by
+  itself. After a hole its pictures are rubbish until the next one, so the first frame after a hole
+  asks the camera for a key frame (`NSCMD_UV_KEYFRAME`, §5.4), if it has a way; the C930e (its H.264
+  unit) sends it two frames later, whatever its key interval. Key frames are told by the first
+  slice's NAL unit type (`uvcIsKeyFrame`: H.264 IDR, H.265 IRAP 16-23).
+- **A recording is Matroska**, of H.264, H.265, MJPEG, YUY2 or NV12, and nothing else is saved: no single
   frames (`uvcStartRecording`, `uvcRecordFrame`; its owner holds it). Raw frames go in as they
   come, `V_UNCOMPRESSED` with the FourCC, and only whole ones. Each recording makes a new file at
   the first free number, so none is written over, and stopping finishes it; a file cut short still
   plays. The muxer counts to 4 GiB, so 64 MiB short of that the recording goes on in the next file:
-  YUY2 at 640x480 fills one in under 4 minutes. Every H.264 file begins at a key frame, which the
+  YUY2 at 640x480 fills one in under 4 minutes. Every H.264 or H.265 file begins at a key frame, which the
   recording asks the camera for, once a second of frames while it waits. A frame's time comes from `ivr_PTS`, with the clock the mode states, not
   from the sequence number: in poor light the C930e falls to 24 fps, and counting frames would make
   the file play fast. What waits goes to the disk after each frame, so a slow disk costs frames.
@@ -598,7 +616,8 @@ Each rule exists because breaking it caused, or would cause, a real failure.
   buffer size and clock), the mode table (variable-length records per format and size, with an
   interval list or range), the topology table, the counts; and `CMD_FLUSH`;
 - **forwarded to the subtask** (they talk to the camera, or start its window): set mode,
-  `CMD_START`/`CMD_STOP`, raw request, get/next/set control, open the settings window;
+  `CMD_START`/`CMD_STOP`, raw request, get/next/set control, key frame request, open the settings
+  window;
 - **queued until completed**: `CMD_READ` (by the transport), `NSCMD_UV_WAITEVENT` (by the
   subtask) - the only abortable commands.
 
@@ -609,8 +628,8 @@ Each rule exists because breaking it caused, or would cause, a real failure.
   (`uvcNextFrame` in `tools/uvc_client.c`). There is no unit list: open 0, 1, 2 ... and ask each.
 - Structures a command fills may grow at their end: pass the compiled size, trust `io_Actual`.
   A `struct UsbVideoModeReq` of the first form asks nothing of an encoder.
-- An H.264/VP8 client reads a stream: keep reads waiting; after a sequence gap a decoder shows
-  rubbish until the next key frame.
+- An H.264/H.265/VP8 client reads a stream: keep reads waiting; after a sequence gap a decoder
+  shows rubbish until the next key frame, which `NSCMD_UV_KEYFRAME` asks for.
 - **A read taken with `GetMsg()` gets no `WaitIO()`.** At an unplug all waiting reads are replied
   at once; a second removal through stale links corrupts memory the client then frees.
 - `NSCMD_UV_REQUEST` is raw, extension units included; a settings change reapplies stored values
@@ -650,7 +669,7 @@ older personality); makers' extension-unit controls in the window (raw requests 
   high-speed isochronous endpoint carries about 24 MB/s), so large uncompressed modes run only at
   low rates or fail with `UVERR_NOBANDWIDTH`. Only the frame size of such a format is checked.
 - A lost interval condemns its frame even if it carried none of it. After a failed bulk transfer,
-  a format without an end check (H.264) may deliver a frame joined halfway.
+  a format without an end check (H.264, H.265) may deliver a frame joined halfway.
 - A bulk stream waits while the subtask talks to the camera (one control query is up to six
   requests). A slow (asynchronous) control reports its outcome as an event and refuses with "not
   ready" until then; the class does not hide this.
@@ -661,9 +680,9 @@ older personality); makers' extension-unit controls in the window (raw requests 
 - A camera that does not come back from suspend is kept awake with "Never suspend automatically"
   in its Neptune USB device settings; none is known.
 
-**Built, never run on hardware:** the frame-based, H.264 and VP8 rows (§5.1); the bulk transport
-(§5.4, tested on a PC against a simulated endpoint); the VHI driver's YUY2 path (§5.10); the stream
-process, the `USBVideo` window and `NSCMD_UV_SETTINGS` (§5.10).
+**Built, never run on hardware:** the frame-based (H.265 among them), H.264 and VP8 rows (§5.1),
+and the key frame requests other than the H.264 unit's (§5.4); the bulk transport
+(§5.4, tested on a PC against a simulated endpoint); the VHI driver's YUY2 path (§5.10).
 
 Quirk-table candidates, should a camera need one: echo `dwMaxVideoFrameSize` in PROBE
 SET_CUR; `SET_INTERFACE(0)` before the first video request; compute an uncompressed payload size

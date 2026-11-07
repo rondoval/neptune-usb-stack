@@ -25,6 +25,20 @@ Everything in this archive reports version **6.4**, followed by the CPU it was b
   when it closes the file. The volume stays listed, and comes back with its open files when the same
   drive is plugged back in.
 
+## H.265 cameras
+
+* **Support for H.265 cameras, untested:** no H.265 camera was at hand. USB video has no H.265
+  format of its own, so such cameras name it in their own way, `H265` or `HEVC`; both are
+  listed as `H265`. `USBVideo` is built to record them into `.mkv` files
+  (`USBVideo FORMAT=H265 TO=RAM:cam`) and to show the live picture, which needs
+  `videocodec.library` 0.5 and `rpivid.codec` from the Emu68 driver stack.
+* **Key frames on request from more cameras.** After lost frames `USBVideo` asks the camera for
+  a key frame, so the picture heals sooner. Besides the request of the USB-IF *H.264 Payload
+  1.00* extension unit, which it used before, it now has the standard requests of UVC 1.1 and
+  1.5. Those are untested: no camera at hand offers them.
+* **For programmers:** `usbvideo.device` has a new command, `NSCMD_UV_KEYFRAME`, that asks the
+  camera for a key frame, and `<devices/usbvideodevice.h>` names `UVFCC_H265`.
+
 ## Bug fixes
 
 * **Some USB 2.0 hubs** (WCH `1A86:809D`, found in combo adapters) work: they answer the check

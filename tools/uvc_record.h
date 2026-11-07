@@ -4,10 +4,10 @@
  *----------------------------------------------------------------------------
  *              UVC tools: recording
  *----------------------------------------------------------------------------
- * A camera's frames into Matroska files: H.264, MJPEG, YUY2 or NV12, each
- * file up to 4 GiB, the recording going on in the next. The caller owns the
- * recording and gives it the frames its reads bring (uvc_client.h); H.264
- * waits for a key frame, which the recording asks the camera for.
+ * A camera's frames into Matroska files: H.264, H.265, MJPEG, YUY2 or NV12,
+ * each file up to 4 GiB, the recording going on in the next. The caller owns
+ * the recording and gives it the frames its reads bring (uvc_client.h); H.264
+ * and H.265 wait for a key frame, which the recording asks the camera for.
  */
 
 #include "uvc_client.h"

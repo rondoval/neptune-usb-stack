@@ -27,6 +27,22 @@
 #define MOVIE_ALL      0xffffffffUL /* what waits for the file: all of it */
 #define MOVIE_FILE_MOST (0xffffffffUL - (64UL << 20)) /* the muxer counts to 4 GiB: a new file well before */
 
+/* A format a recording takes, and how the muxer stores it */
+struct MovieFormat
+{
+    ULONG mf_FourCC;
+    int   mf_Codec;  /* MKV_ */
+};
+
+static const struct MovieFormat MovieFormats[] =
+{
+    { UVFCC_H264, MKV_H264 },
+    { UVFCC_H265, MKV_H265 },
+    { UVFCC_MJPG, MKV_MJPEG },
+    { UVFCC_YUY2, MKV_RAW },
+    { UVFCC_NV12, MKV_RAW }
+};
+
 /* A recording, in Matroska files of up to 4 GiB; the muxer's memory follows it */
 struct UvcMovie
 {
@@ -34,7 +50,7 @@ struct UvcMovie
     struct mkv_io     mv_Io;
     struct mkv_track  mv_Track;
     ULONG             mv_Memory;    /* the muxer's, in bytes */
-    struct UvcCamera *mv_Camera;    /* asked for a key frame while H.264 waits for one */
+    struct UvcCamera *mv_Camera;    /* asked for a key frame while H.264 or H.265 waits for one */
     CONST_STRPTR      mv_Stem;      /* the files' names begin with it */
     ULONG             mv_FrameSize; /* of a raw format's frame: no other is whole */
     BPTR              mv_File;      /* the file being written */
@@ -68,16 +84,29 @@ static int movieSeek(void *user, uint32_t position)
     return IoErr() == 0;
 }
 
+/* The format a recording is of, NULL if it cannot be recorded */
+static const struct MovieFormat *movieFormat(ULONG fourcc)
+{
+    for(ULONG cnt = 0; cnt < sizeof(MovieFormats) / sizeof(MovieFormats[0]); cnt++)
+    {
+        if(MovieFormats[cnt].mf_FourCC == fourcc)
+        {
+            return &MovieFormats[cnt];
+        }
+    }
+    return NULL;
+}
+
 /* Return TRUE for a format that can be recorded */
 BOOL uvcCanRecord(ULONG fourcc)
 {
-    return (fourcc == UVFCC_H264) || (fourcc == UVFCC_MJPG) || (fourcc == UVFCC_YUY2) || (fourcc == UVFCC_NV12);
+    return movieFormat(fourcc) != NULL;
 }
 
 /* Say why the recording stopped */
 static void recordingFailed(const struct UvcRecording *rc, int error)
 {
-    uvcReport((error == MKV_ERR_STREAM) ? "The camera's H.264 cannot go into '%s': no SPS or PPS at its key frame" :
+    uvcReport((error == MKV_ERR_STREAM) ? "The camera's stream cannot go into '%s': no parameter sets at its key frame" :
                                           "Could not write '%s'", rc->rc_Name);
 }
 
@@ -162,7 +191,7 @@ BOOL uvcStartRecording(struct UvcRecording *rc, struct UvcCamera *cm, CONST_STRP
     }
     if(!uvcCanRecord(fourcc))
     {
-        uvcReport("Only H264, MJPG, YUY2 and NV12 can be recorded");
+        uvcReport("Only H264, H265, MJPG, YUY2 and NV12 can be recorded");
         return FALSE;
     }
 
@@ -177,7 +206,7 @@ BOOL uvcStartRecording(struct UvcRecording *rc, struct UvcCamera *cm, CONST_STRP
     mv->mv_Io.user = mv;
     mv->mv_Io.write = movieWrite;
     mv->mv_Io.seek = movieSeek;
-    mv->mv_Track.codec = (fourcc == UVFCC_H264) ? MKV_H264 : (fourcc == UVFCC_MJPG) ? MKV_MJPEG : MKV_RAW;
+    mv->mv_Track.codec = movieFormat(fourcc)->mf_Codec;
     mv->mv_Track.fourcc = fourcc;
     mv->mv_Track.width = uvq->uvq_Width;
     mv->mv_Track.height = uvq->uvq_Height;
@@ -217,13 +246,14 @@ static BOOL fileNext(struct UvcRecording *rc)
     return TRUE;
 }
 
-/* An H.264 file begins at a key frame: ask the camera for one, once a second
-   of frames while none comes */
+/* An H.264 or H.265 file begins at a key frame: ask the camera for one, once
+   a second of frames while none comes. A camera with no way to ask, or one
+   that refuses, sends one when its own interval says so. */
 static void waitKeyFrame(struct UvcMovie *mv)
 {
     if(!(mv->mv_KeyWait++ % mv->mv_Track.fps))
     {
-        uvcRequestKeyFrame(mv->mv_Camera);
+        uvcCommand(mv->mv_Camera->cm_Request, NSCMD_UV_KEYFRAME, NULL, 0);
     }
 }
 
@@ -247,8 +277,8 @@ static ULONG movieTime(struct UvcMovie *mv, const struct IOVideoReq *ivr)
     return mv->mv_Ms;
 }
 
-/* Return how much of a frame goes in: H.264 as it is, a JPEG up to its EOI,
-   a raw frame only if it is whole; 0 to leave it out */
+/* Return how much of a frame goes in: H.264 and H.265 as they are, a JPEG
+   up to its EOI, a raw frame only if it is whole; 0 to leave it out */
 static ULONG frameLength(const struct UvcMovie *mv, const UBYTE *frame, ULONG len)
 {
     switch(mv->mv_Track.codec)
@@ -266,8 +296,8 @@ static ULONG frameLength(const struct UvcMovie *mv, const UBYTE *frame, ULONG le
 
 /* Put the frame a read brought into the recording, and what waits into the
    file; nothing if no recording is open. Close to 4 GiB it goes on in a new
-   file. H.264 can only begin a file at a key frame, asked for while it
-   waits, and a frame with nothing in it is left out; neither counts as
+   file. H.264 and H.265 can only begin a file at a key frame, asked for
+   while they wait, and a frame with nothing in it is left out; neither counts as
    saved. On failure report the reason and return FALSE. */
 BOOL uvcRecordFrame(struct UvcRecording *rc, const struct IOVideoReq *ivr)
 {
@@ -281,7 +311,7 @@ BOOL uvcRecordFrame(struct UvcRecording *rc, const struct IOVideoReq *ivr)
     struct mkv *mux = &mv->mv_Mux;
     const UBYTE *frame = ivr->ivr_Std.io_Data;
     ULONG len = frameLength(mv, frame, ivr->ivr_Std.io_Actual);
-    BOOL key = (mv->mv_Track.codec != MKV_H264) || uvcH264Key(frame, len);
+    BOOL key = uvcIsKeyFrame(mv->mv_Track.fourcc, frame, len);
 
     if(len && mv->mv_Begun && (mkv_bytes(mux) + len + MJPEG_STD_DHT_SIZE > MOVIE_FILE_MOST) && !fileNext(rc))
     {

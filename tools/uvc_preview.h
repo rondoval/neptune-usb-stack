@@ -8,15 +8,15 @@
  * videocodec session, the preview window, the recording (uvc_record.h). The
  * caller may block on anything (a held menu, a
  * requester, its own window's layers) and no read comes back late, which
- * would leave a hole in an H.264 stream and in a recording.
+ * would leave a hole in an H.264 or H.265 stream and in a recording.
  *
  * All of the camera belongs to the process. Commands are answered before
  * these calls return, so make them from one task, the one that called
  * uvpOpen(). What the camera is and what the stream did can be read at any
  * time, through the const pointers.
  *
- * MJPEG and H.264 (decoded) and YUY2 and NV12 (converted) get a preview
- * window where the machine can show them, through videocodec.library.
+ * MJPEG, H.264 and H.265 (decoded) and YUY2 and NV12 (converted) get a
+ * preview window where the machine can show them, through videocodec.library.
  * Without one (no library, not a Picasso96 screen, another format) the
  * stream runs all the same, for saving, and uvpWhy() says what is missing.
  */
@@ -75,8 +75,8 @@ void uvpKeepClear(struct UvcPreview *up, const struct IBox *box);
 BOOL uvpStart(struct UvcPreview *up, const struct UsbVideoModeReq *uvq, STRPTR stem);
 void uvpStop(struct UvcPreview *up);
 /* Record every frame from here on into a new Matroska file, or no more:
-   H.264, MJPEG, YUY2 or NV12, H.264 from a key frame, which the camera is
-   asked for */
+   H.264, H.265, MJPEG, YUY2 or NV12, H.264 and H.265 from a key frame,
+   which the camera is asked for */
 BOOL uvpRecord(struct UvcPreview *up, BOOL on);
 /* Open the camera's settings window */
 BOOL uvpSettings(struct UvcPreview *up);

@@ -394,7 +394,7 @@ static const UWORD NSDSupported[] =
     NSCMD_UV_GETINFO, NSCMD_UV_GETMODES, NSCMD_UV_SETMODE, NSCMD_UV_GETSTATS,
     NSCMD_UV_REQUEST, NSCMD_UV_GETTOPOLOGY, NSCMD_UV_WAITEVENT,
     NSCMD_UV_GETCONTROL, NSCMD_UV_NEXTCONTROL, NSCMD_UV_SETCONTROL, NSCMD_UV_SETTINGS,
-    NSCMD_DEVICEQUERY, 0
+    NSCMD_UV_KEYFRAME, NSCMD_DEVICEQUERY, 0
 };
 
 static WORD cmdNSDeviceQuery(struct IOStdReq *ioreq)
@@ -482,6 +482,7 @@ void (devBeginIO)(struct IOStdReq * ioreq asm("a1"), struct NepVideoDevBase * ba
         case NSCMD_UV_NEXTCONTROL:
         case NSCMD_UV_SETCONTROL:
         case NSCMD_UV_SETTINGS:
+        case NSCMD_UV_KEYFRAME:
         case CMD_START:
         case CMD_STOP:
             /* talks to the camera: the binding's subtask does it and replies */

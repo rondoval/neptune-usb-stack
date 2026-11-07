@@ -37,6 +37,12 @@ _Static_assert(sizeof(struct UsbVideoVP8FrameDesc) == 31, "VP8 frame");
 _Static_assert(sizeof(struct UsbVideoSCR) == 6, "source clock reference");
 _Static_assert(sizeof(struct UvcxVideoConfig) == 46, "H.264 unit configuration");
 _Static_assert(sizeof(struct UvcxMuxHeader) == 22, "embedded stream header");
+_Static_assert(sizeof(struct UsbVideoGenerateKeyFrame) == 1, "generate key frame");
+_Static_assert(sizeof(struct UsbVideoSyncRefFrame) == 4, "sync and reference frame");
+
+/* A frame-based format named HEVC: H.265, which has no UVC format of its own,
+   under the name the class gives it (UVFCC_H265), whichever cameras use */
+#define UVC_FOURCC_HEVC 0x48455643 /* 'HEVC' */
 
 /* The payload-format table: one row is all the class knows about a format.
    A format without a row is recorded as present, but not streamable. The
@@ -57,7 +63,7 @@ static const struct UvcPayload UvcPayloads[] =
         UPFR_FRAME, UPF_JPEGSTART,
         UVC_FORMAT(UsbVideoMJPEGFormatDesc),
         UVC_FRAME(UsbVideoFrameDesc, bFrameIntervalType),
-        0, 0, 1, UVFCC_MJPG
+        0, 0, 1, UPKF_NONE, UVFCC_MJPG
     },
     {
         /* YUY2, NV12 and whatever else a camera names: its frames are laid
@@ -66,16 +72,17 @@ static const struct UvcPayload UvcPayloads[] =
         UPFR_FRAME, UPF_FIXEDSIZE,
         UVC_FORMAT(UsbVideoUncompressedFormatDesc),
         UVC_FRAME(UsbVideoFrameDesc, bFrameIntervalType),
-        UVC_GUID(UsbVideoUncompressedFormatDesc), 0, 1, 0
+        UVC_GUID(UsbVideoUncompressedFormatDesc), 0, 1, UPKF_NONE, 0
     },
     {
         /* whatever a camera names that comes in frames of varying size:
-           H.264, mostly, from cameras older than the H.264 format below */
+           H.264 from cameras older than the H.264 format below, and H.265,
+           which has no format of its own */
         UDST_VIDEO_STREAM_FORMAT_FRAME_BASED, UDST_VIDEO_STREAM_FRAME_FRAME_BASED,
         UPFR_FRAME, 0,
         UVC_FORMAT(UsbVideoFrameBasedFormatDesc),
         UVC_FRAME(UsbVideoFrameBasedFrameDesc, bFrameIntervalType),
-        UVC_GUID(UsbVideoFrameBasedFormatDesc), 0, 1, 0
+        UVC_GUID(UsbVideoFrameBasedFormatDesc), 0, 1, UPKF_STREAM, 0
     },
     {
         /* asked for as a plain single stream: the usage every frame of the
@@ -84,7 +91,7 @@ static const struct UvcPayload UvcPayloads[] =
         UPFR_TEMPORAL, 0,
         UVC_FORMAT(UsbVideoH264FormatDesc),
         UVC_FRAME(UsbVideoH264FrameDesc, bNumFrameIntervals),
-        0, UVPCU_FILE_STORAGE_IP, 1, UVFCC_H264
+        0, UVPCU_FILE_STORAGE_IP, 1, UPKF_ENCODER, UVFCC_H264
     },
     {
         /* three bytes of flags in its payload headers (VP8 Payload 1.5, table 2-2) */
@@ -92,7 +99,7 @@ static const struct UvcPayload UvcPayloads[] =
         UPFR_TEMPORAL, 0,
         UVC_FORMAT(UsbVideoVP8FormatDesc),
         UVC_FRAME(UsbVideoVP8FrameDesc, bNumFrameIntervals),
-        0, UVPCU_FILE_STORAGE_IP, 3, UVFCC_VP80
+        0, UVPCU_FILE_STORAGE_IP, 3, UPKF_ENCODER, UVFCC_VP80
     },
     {
         /* H.264 that a camera from before these formats puts into the frames
@@ -103,7 +110,7 @@ static const struct UvcPayload UvcPayloads[] =
         0, 0,
         0, 0, 0,
         0, 0, 0,
-        0, 0, 1, UVFCC_H264
+        0, 0, 1, UPKF_UVCX, UVFCC_H264
     },
 };
 
@@ -114,6 +121,10 @@ static const struct UvcPayload UvcPayloads[] =
 /* A format GUID that stands for a FourCC is the four characters followed by
    these twelve bytes (Uncompressed Payload 1.5, table 2-1, in wire order) */
 static const UBYTE UvcFourCCGUID[12] = { 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71 };
+
+#define UVC_FOURCC_CHARS      4
+#define UVC_FOURCC_CHAR_FIRST ' ' /* printable; spaces pad a short name */
+#define UVC_FOURCC_CHAR_LAST  '~'
 
 /* The descriptor subtypes that open a format group (UVC 1.5, A.6) */
 #define UVC_FORMAT_TYPES ((1UL << UDST_VIDEO_STREAM_FORMAT_UNCOMPRESSED) | \
@@ -127,12 +138,20 @@ static const UBYTE UvcFourCCGUID[12] = { 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x0
                           (1UL << UDST_VIDEO_STREAM_FORMAT_VP8) | \
                           (1UL << UDST_VIDEO_STREAM_FORMAT_VP8_SIMULCAST))
 
-/* Does a format GUID stand for a FourCC? */
+/* Does a format GUID stand for a FourCC? A Direct3D format's GUID has the
+   same twelve bytes behind a number (D3DFMT_L8: 0x32), not characters. */
 static BOOL uvcIsFourCCGUID(const UBYTE *guid)
 {
+    for(ULONG cnt = 0; cnt < UVC_FOURCC_CHARS; cnt++)
+    {
+        if((guid[cnt] < UVC_FOURCC_CHAR_FIRST) || (guid[cnt] > UVC_FOURCC_CHAR_LAST))
+        {
+            return FALSE;
+        }
+    }
     for(ULONG cnt = 0; cnt < sizeof(UvcFourCCGUID); cnt++)
     {
-        if(guid[4 + cnt] != UvcFourCCGUID[cnt])
+        if(guid[UVC_FOURCC_CHARS + cnt] != UvcFourCCGUID[cnt])
         {
             return FALSE;
         }
@@ -373,6 +392,13 @@ static BOOL uvcAddStreamHeader(struct UvcStreamDesc *us, ULONG subtype, const UB
         us->us_Info = ih->bmInfo;
         us->us_TerminalLink = ih->bTerminalLink;
         us->us_StillMethod = ih->bStillCaptureMethod;
+        /* a row per format, if all of them are there */
+        if(len >= sizeof(*ih) + (ULONG) ih->bNumFormats * ih->bControlSize)
+        {
+            us->us_ControlSize = ih->bControlSize;
+            us->us_ControlRows = ih->bNumFormats;
+            us->us_Controls = ih->bmaControls;
+        }
     } else {
         const struct UsbVideoOutputHeaderDesc *oh = (const struct UsbVideoOutputHeaderDesc *) desc;
 
@@ -405,6 +431,9 @@ static void uvcAddFormat(struct UvcFunction *uf, struct UvcStreamDesc *us, ULONG
     ufo->ufo_Payload = uvcFindPayload(subtype, desc, len);
     ufo->ufo_DefFrame = ufo->ufo_Payload ? desc[ufo->ufo_Payload->up_DefFrame] : 0;
     ufo->ufo_Frames = &uf->uf_Frames[uf->uf_NumFrames];
+    /* the header comes before the formats; its rows go by format index */
+    BOOL hasrow = us->us_ControlSize && ufo->ufo_Index && (ufo->ufo_Index <= us->us_ControlRows);
+    ufo->ufo_Controls = hasrow ? us->us_Controls[(ufo->ufo_Index - 1) * us->us_ControlSize] : 0;
 }
 /* \\\ */
 
@@ -572,6 +601,27 @@ struct UvcEntity * uvcFindEntity(const struct UvcFunction *uf, ULONG id)
 }
 /* \\\ */
 
+/* /// "uvcPathEntity()" */
+/* The first terminal or unit of a subtype (UDST_VIDEO_CTRL_) on the path
+   that ends in a stream's terminal, walked from there towards the source
+   along each entity's first input; NULL = the path has none */
+struct UvcEntity * uvcPathEntity(const struct UvcFunction *uf, const struct UvcStreamDesc *us, ULONG type)
+{
+    struct UvcEntity *ue = uvcFindEntity(uf, us->us_TerminalLink);
+
+    /* an entity count bounds the walk: a malformed loop of sources ends too */
+    for(ULONG steps = 0; ue && (steps < uf->uf_NumEntities); steps++)
+    {
+        if(ue->ue_Type == type)
+        {
+            return ue;
+        }
+        ue = ue->ue_NumSources ? uvcFindEntity(uf, ue->ue_Sources[0]) : NULL;
+    }
+    return NULL;
+}
+/* \\\ */
+
 /* /// "uvcFrameInterval()" */
 /* The intervals stay in the descriptor; a list has ufr_NumIntervals entries,
    a continuous range (ufr_NumIntervals 0) minimum, maximum and step. */
@@ -606,14 +656,20 @@ BOOL uvcIsStreamable(const struct UvcFormat *ufo)
 
 /* /// "uvcFourCC()" */
 /* The name of a streamable format: the row's, or the four characters its
-   GUID begins with */
+   GUID begins with - HEVC listed as H265 */
 ULONG uvcFourCC(const struct UvcFormat *ufo)
 {
     const struct UvcPayload *up = ufo->ufo_Payload;
-    const UBYTE *guid = &ufo->ufo_Desc[up->up_GUID];
+
+    if(!up->up_GUID)
+    {
+        return up->up_FourCC;
+    }
 
     /* four characters in reading order: a big-endian long */
-    return up->up_GUID ? AROS_BE2LONG(*(const ULONG *) guid) : up->up_FourCC;
+    ULONG fourcc = AROS_BE2LONG(*(const ULONG *) &ufo->ufo_Desc[up->up_GUID]);
+
+    return (fourcc == UVC_FOURCC_HEVC) ? UVFCC_H265 : fourcc;
 }
 /* \\\ */
 

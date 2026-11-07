@@ -86,6 +86,91 @@ LONG uvcPassRequest(struct NepClassVideo *ncv, struct IOStdReq *ioreq)
 }
 /* \\\ */
 
+/* /// "uvcEncoderHasSync()" */
+/* Does an Encoding Unit take its sync frame control while the stream runs?
+   Its descriptor's second bitmap says, a selector's bit being selector - 1. */
+static BOOL uvcEncoderHasSync(const struct UvcEntity *eu)
+{
+    ULONG bit = UVEUCS_SYNC_REF_FRAME_CONTROL - 1;
+    ULONG byte = bit / 8;
+    const UBYTE *runtime = eu->ue_Controls + eu->ue_ControlSize;
+
+    return (byte < eu->ue_ControlSize) && ((runtime[byte] >> (bit % 8)) & 1);
+}
+/* \\\ */
+
+/* /// "uvcKeyFrame()" */
+/* NSCMD_UV_KEYFRAME: ask the camera for a key frame in the stream of the
+   mode in force, the way the mode's row says (UPKF_): an encoder that lacks
+   its control at run time leaves the streaming interface's, and a format
+   whose bmaControls lack that leaves nothing. Does not wait for the frame.
+   Returns 0 once asked, UVERR_NOMODE without a mode, UVERR_NOCONTROL when
+   there is no way to ask, else the request's error. */
+LONG uvcKeyFrame(struct NepClassVideo *ncv, struct NepVideoStream *ns)
+{
+    const struct UvcFormat *ufo = ns->ns_Mode.um_Format;
+
+    if(!ufo)
+    {
+        return UVERR_NOMODE;
+    }
+
+    ULONG method = ufo->ufo_Payload->up_KeyFrame;
+    struct UvcEntity *eu = (method == UPKF_ENCODER)
+                           ? uvcPathEntity(ncv->ncv_Function, ns->ns_Desc, UDST_VIDEO_CTRL_ENCODING_UNIT) : NULL;
+
+    if((method == UPKF_ENCODER) && !(eu && uvcEncoderHasSync(eu)))
+    {
+        method = UPKF_STREAM;
+    }
+    if((method == UPKF_STREAM) && !(ufo->ufo_Controls & (1 << UVIHB_GENERATE_KEY_FRAME)))
+    {
+        method = UPKF_NONE;
+    }
+
+    LONG ioerr;
+
+    switch(method)
+    {
+        case UPKF_UVCX:
+        {
+            struct UvcxPictureType picture = { 0, AROS_WORD2LE(UVCXPT_NEW_SETS) };
+
+            ioerr = uvcRequest(ncv, UVUDR_SET_CUR, uvcFindH264Unit(ncv->ncv_Function)->ue_ID, ncv->ncv_IfNum,
+                               UVCX_PICTURE_TYPE_CONTROL, &picture, sizeof(picture), NULL);
+            break;
+        }
+
+        case UPKF_ENCODER:
+        {
+            /* one frame, now: no interval, no gradual refresh */
+            struct UsbVideoSyncRefFrame sync = { UVSFT_KEY_FRAME, 0, 0 };
+
+            ioerr = uvcRequest(ncv, UVUDR_SET_CUR, eu->ue_ID, ncv->ncv_IfNum,
+                               UVEUCS_SYNC_REF_FRAME_CONTROL, &sync, sizeof(sync), NULL);
+            break;
+        }
+
+        case UPKF_STREAM:
+        {
+            struct UsbVideoGenerateKeyFrame generate = { UVGKF_GENERATE };
+
+            ioerr = uvcRequest(ncv, UVUDR_SET_CUR, 0, ns->ns_Desc->us_IfNum,
+                               UVVSCS_GENERATE_KEY_FRAME_CONTROL, &generate, sizeof(generate), NULL);
+            break;
+        }
+
+        default:
+            return UVERR_NOCONTROL;
+    }
+    if(ioerr)
+    {
+        return (ioerr == UHIOERR_STALL) ? UVERR_REFUSED : UVERR_USB;
+    }
+    return 0;
+}
+/* \\\ */
+
 /* /// "uvcNegotiate()" */
 /* Propose a mode and take what the camera makes of it. Only PROBE SET_CUR
    and GET_CUR are sent: the requests camera firmware gets wrong are the ones

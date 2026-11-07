@@ -40,6 +40,7 @@ struct UvcPayload
                                              block; 0 = the format has no such thing */
     UBYTE               up_InfoBytes;     /* bytes of flags in a payload header; the time stamp
                                              and the clock pair follow them */
+    UBYTE               up_KeyFrame;      /* UPKF_: how a key frame is asked for */
     ULONG               up_FourCC;        /* the name the mode list reports, if up_GUID is 0 */
 };
 
@@ -51,6 +52,13 @@ struct UvcPayload
 #define UPF_JPEGSTART   0x02 /* a sample starts with a JPEG start-of-image marker */
 #define UPF_EMBEDDED    0x04 /* the sample is H.264 that the camera put into a JPEG frame
                                 (<devices/usb_video.h>): what is handed over is that */
+
+#define UPKF_NONE       0   /* no way to ask; every sample of such a format stands alone */
+#define UPKF_STREAM     1   /* Generate Key Frame of the streaming interface, if the
+                               format's bmaControls has it */
+#define UPKF_ENCODER    2   /* the Encoding Unit's sync frame control, if it has that at
+                               run time; else as UPKF_STREAM */
+#define UPKF_UVCX       3   /* the picture type control of the H.264 extension unit */
 
 /* JPEG, as far as the class looks into a frame. A picture begins with the
    start-of-image marker. Segments follow, each a marker - 0xff and a code -
@@ -78,6 +86,8 @@ struct UvcFormat
     UBYTE               ufo_Type;         /* format descriptor subtype */
     UBYTE               ufo_NumFrames;    /* frames parsed, not the descriptor's count */
     UBYTE               ufo_DefFrame;     /* bDefaultFrameIndex */
+    UBYTE               ufo_Controls;     /* the first byte of its row of the input header's
+                                             bmaControls (bits UVIHB_); 0 = none */
     const struct UvcPayload *ufo_Payload; /* NULL = present, but not streamable */
     struct UvcFrame    *ufo_Frames;
     const UBYTE        *ufo_Desc;         /* the format descriptor */
@@ -92,8 +102,10 @@ struct UvcStreamDesc
     UBYTE               us_TerminalLink;  /* the terminal this stream is attached to */
     UBYTE               us_StillMethod;   /* bStillCaptureMethod */
     UBYTE               us_NumFormats;    /* formats parsed */
-    UBYTE               us_Pad;
+    UBYTE               us_ControlSize;   /* input header bControlSize: bytes of a bmaControls row */
+    UBYTE               us_ControlRows;   /* input header bNumFormats: its rows, 0 = none */
     struct UvcFormat   *us_Formats;
+    const UBYTE        *us_Controls;      /* input header bmaControls: a row per format index */
 };
 
 struct UvcEntity
@@ -136,6 +148,7 @@ void uvcAddStreamDesc(struct UvcFunction *uf, struct UvcStreamDesc *us, const UB
 void uvcAddEmbeddedFormat(struct UvcFunction *uf, struct UvcStreamDesc *us);
 struct UvcEntity * uvcFindEntity(const struct UvcFunction *uf, ULONG id);
 struct UvcEntity * uvcFindH264Unit(const struct UvcFunction *uf);
+struct UvcEntity * uvcPathEntity(const struct UvcFunction *uf, const struct UvcStreamDesc *us, ULONG type);
 ULONG uvcFrameInterval(const struct UvcFrame *ufr, ULONG idx);
 ULONG uvcFrameMinInterval(const struct UvcFrame *ufr);
 ULONG uvcFrameMaxInterval(const struct UvcFrame *ufr);

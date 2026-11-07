@@ -1101,6 +1101,10 @@ void nVideoTask()
                         ioreq->io_Error = uvcPassRequest(ncv, ioreq);
                         break;
 
+                    case NSCMD_UV_KEYFRAME:
+                        ioreq->io_Error = uvcKeyFrame(ncv, (struct NepVideoStream *) ioreq->io_Unit);
+                        break;
+
                     case NSCMD_UV_GETCONTROL:
                     case NSCMD_UV_NEXTCONTROL:
                     case NSCMD_UV_SETCONTROL:

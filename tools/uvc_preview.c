@@ -5,7 +5,7 @@
  * Implements uvc_preview.h.
  *
  * The memory of the frames is ours, not the session's: reads fill it and
- * VC_ImportPacket() (a decoder's, MJPEG and H.264) or VC_ImportFrame() (a
+ * VC_ImportPacket() (a decoder's, MJPEG, H.264, H.265) or VC_ImportFrame() (a
  * converter's, the uncompressed formats) lends it to the session, with no
  * copy. So a read never points into memory a session frees, the session can
  * fail and the stream carry on saving, and a stream without a session is the
@@ -149,6 +149,7 @@ static const struct PreviewPath PreviewPaths[] =
 {
     { UVFCC_MJPG, VCK_Decoder, VCC_MJPEG, 0, 0 },
     { UVFCC_H264, VCK_Decoder, VCC_H264, 0, 0 },
+    { UVFCC_H265, VCK_Decoder, VCC_H265, 0, 0 },
     { UVFCC_YUY2, VCK_Converter, VCC_Raw, VCF_YUYV, 2 },
     { UVFCC_NV12, VCK_Converter, VCC_Raw, VCF_NV12, 1 }
 };
@@ -506,10 +507,16 @@ static BOOL openLibraries(struct UvcPreview *up)
     return VideoCodecBase != NULL;
 }
 
-/* The pixel formats a session of the path writes, VCF_MASK()s; 0 if no
-   backend has one, or no converter reads the camera's format */
+/* The pixel formats a session of the path can be asked for, VCF_MASK()s:
+   what the rows for its codec and kind write that sessions can use (for a
+   converter, those that read the camera's format), and what a converter the
+   library puts behind such a decoder adds (an H.265 decoder's column
+   pictures need one); 0 if there is no such row */
 static ULONG sessionFormats(const struct PreviewPath *pp)
 {
+    ULONG input = pp->pp_Input ? VCF_MASK(pp->pp_Input) : 0;
+    ULONG written = 0;
+
     for(ULONG index = 0; ; index++)
     {
         struct VCCodecInfo info;
@@ -517,12 +524,16 @@ static ULONG sessionFormats(const struct PreviewPath *pp)
         info.Size = sizeof(info);
         if(VC_QueryCodec(index, &info))
         {
-            return 0;
+            return written;
         }
         if((info.Codec == pp->pp_Codec) && (info.Kind == pp->pp_Kind) && (info.Flags & VCCF_Session) &&
-           (!pp->pp_Input || (info.InputFormats & VCF_MASK(pp->pp_Input))))
+           (!input || (info.InputFormats & input)))
         {
-            return info.OutputFormats;
+            written |= info.OutputFormats;
+            if(VC_HAS_FIELD(info.Size, struct VCCodecInfo, ChainOutputFormats))
+            {
+                written |= info.ChainOutputFormats;
+            }
         }
     }
 }
@@ -655,12 +666,13 @@ static ULONG framesPerSecond(const struct UvcPreview *up)
 }
 
 /* The camera should send a key frame: ask it, once a second of frames
-   while none comes */
+   while none comes. A camera with no way to ask, or one that refuses, sends
+   one when its own interval says so. */
 static void askKeyFrame(struct UvcPreview *up)
 {
     if(!(up->up_KeyAsked++ % framesPerSecond(up)))
     {
-        uvcRequestKeyFrame(&up->up_Camera);
+        uvcCommand(up->up_Camera.cm_Request, NSCMD_UV_KEYFRAME, NULL, 0);
     }
 }
 
@@ -845,7 +857,7 @@ static BOOL startStream(struct UvcPreview *up, const struct UsbVideoModeReq *uvq
     up->up_Interval = up->up_Mode.uvq_Interval ? up->up_Mode.uvq_Interval : USUAL_INTERVAL;
     if(!up->up_Path)
     {
-        uvcReport("No preview: only MJPEG, H.264, YUY2 and NV12 can be shown");
+        uvcReport("No preview: only MJPEG, H.264, H.265, YUY2 and NV12 can be shown");
     }
 
     /* the buffers go to the VPU */
@@ -885,8 +897,8 @@ static void frameIn(struct UvcPreview *up, struct UvcRead *rd)
     struct UvpCounts *uc = &up->up_Counts;
     struct IOVideoReq *ivr = rd->rd_Req;
     ULONG len = ivr->ivr_Std.io_Actual;
-    BOOL h264 = up->up_Mode.uvq_FourCC == UVFCC_H264;
-    BOOL key = h264 && uvcH264Key(ivr->ivr_Std.io_Data, len);
+    BOOL stream = uvcIsAnnexB(up->up_Mode.uvq_FourCC);
+    BOOL key = stream && uvcIsKeyFrame(up->up_Mode.uvq_FourCC, ivr->ivr_Std.io_Data, len);
     ULONG lost = uvcLost(cp);
 
     uc->uc_Frames++;
@@ -899,7 +911,7 @@ static void frameIn(struct UvcPreview *up, struct UvcRead *rd)
     {
         up->up_KeyAsked = 0;
     }
-    else if(h264 && (lost != uc->uc_Lost))
+    else if(stream && (lost != uc->uc_Lost))
     {
         askKeyFrame(up); /* after a hole the decoder gives rubbish until one comes */
     }

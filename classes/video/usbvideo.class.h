@@ -31,6 +31,7 @@ void nVideoTask();
 LONG uvcRequest(struct NepClassVideo *ncv, ULONG request, ULONG entity, ULONG ifnum,
                 ULONG selector, APTR data, ULONG len, UBYTE *reason);
 LONG uvcPassRequest(struct NepClassVideo *ncv, struct IOStdReq *ioreq);
+LONG uvcKeyFrame(struct NepClassVideo *ncv, struct NepVideoStream *ns);
 LONG uvcEmbedCommit(struct NepClassVideo *ncv, const struct UvcxVideoConfig *cfg);
 LONG uvcNegotiateEmbedded(struct NepClassVideo *ncv, struct NepVideoStream *ns,
                           struct UvcFormat *ufo, struct UvcFrame *ufr, ULONG interval,

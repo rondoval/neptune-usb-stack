@@ -15,12 +15,15 @@
  *   USBVideoTest FRAMES=300        capture 300 frames in the default mode (or
  *                                  WIDTH/HEIGHT/FPS); check count, rate and
  *                                  frame contents
- *   USBVideoTest FRAMES=10 TO=RAM:cam   ... and record them, MJPG, H264, YUY2 or NV12, into
- *                                  RAM:cam-0001.mkv, or the first number free
+ *   USBVideoTest FRAMES=10 TO=RAM:cam   ... and record them, MJPG, H264, H265, YUY2 or NV12,
+ *                                  into RAM:cam-0001.mkv, or the first number free
  *   USBVideoTest FORMAT=YUY2 FRAMES=10  capture in a format other than the default
  *                                  (MJPG if available). Uncompressed: every
  *                                  frame must be exactly uvq_MaxFrameSize.
- *                                  H264: no sequence gap allowed
+ *                                  H264, H265: no sequence gap allowed, and a
+ *                                  key frame asked for (NSCMD_UV_KEYFRAME) at
+ *                                  a second must come within half a second,
+ *                                  unless the camera has no way to ask
  *   USBVideoTest FORMAT=H264 BITRATE=1000000 KEYFRAME=2000 FRAMES=300
  *                                  ... with encoder bit rate (bit/s) and key
  *                                  frame interval (ms). Only H264 modes of a
@@ -43,7 +46,7 @@
  *                                  MJPG
  *   USBVideoTest PREVIEW           run the stream process of USBVideo: FRAMES
  *                                  (default 300) through the decoder (MJPG,
- *                                  H264) or the converter (YUY2, NV12) into its
+ *                                  H264, H265) or the converter (YUY2, NV12) into its
  *                                  window, which moves and changes size on the
  *                                  way; the pictures must keep up. In the
  *                                  mode of WIDTH/HEIGHT/FPS/FORMAT, TO saves
@@ -98,6 +101,7 @@ enum
 };
 
 #define TICKS_PER_SEC 50
+#define KEY_ANSWER_LEAST     2   /* frames a camera has at least to answer a key frame request */
 #define PREVIEW_FRAMES       300 /* frames of a preview test */
 #define PREVIEW_CYCLE_FRAMES 30  /* frames of each start and stop */
 #define PREVIEW_POLL_TICKS   5
@@ -237,14 +241,22 @@ static BOOL captureFrames(struct UvcCamera *cm, struct UsbVideoModeReq *uvq, ULO
     ULONG ptsframes = 0;
     ULONG firsttick = 0;
     ULONG lasttick = 0;
-    /* validation by format: MJPG = complete JPEG; stream (H264) = start code
-       and key frame count; VP8 = variable size, not checked; any other =
-       fixed size uvq_MaxFrameSize */
+    /* validation by format: MJPG = complete JPEG; stream (H264, H265) = start
+       code, key frame count and a key frame soon after asking for one; VP8 =
+       variable size, not checked; any other = fixed size uvq_MaxFrameSize */
     BOOL isjpeg = (uvq->uvq_FourCC == UVFCC_MJPG);
-    BOOL isstream = uvq->uvq_FourCC == UVFCC_H264;
+    BOOL isstream = uvcIsAnnexB(uvq->uvq_FourCC);
     BOOL isfixed = !isjpeg && !isstream && (uvq->uvq_FourCC != UVFCC_VP80);
     BOOL nostart = FALSE;
     ULONG keyframes = 0;
+    /* the key frame request: at a second of frames, its answer within half
+       of that; a capture too short for both does not ask */
+    ULONG fps = uvq->uvq_Interval ? UVC_INTERVAL_UNITS / uvq->uvq_Interval : 0;
+    ULONG askat = fps ? fps : 1;
+    ULONG keywithin = (askat / 2 > KEY_ANSWER_LEAST) ? askat / 2 : KEY_ANSWER_LEAST;
+    BOOL askkey = isstream && (frames >= askat + keywithin);
+    LONG keyerr = 0;
+    ULONG keyafter = 0; /* frames from the request to the key frame, 0 = none yet */
     ULONG embedded = 0;
     ULONG embeddedbytes = 0;
     ULONG paired = 0;
@@ -338,7 +350,17 @@ static BOOL captureFrames(struct UvcCamera *cm, struct UsbVideoModeReq *uvq, ULO
                 }
                 if(isstream)
                 {
-                    keyframes += uvcH264Key(jpeg, len);
+                    BOOL key = uvcIsKeyFrame(uvq->uvq_FourCC, jpeg, len);
+
+                    keyframes += key ? 1 : 0;
+                    if(askkey && (got == askat))
+                    {
+                        keyerr = uvcCommand(cm->cm_Request, NSCMD_UV_KEYFRAME, NULL, 0);
+                    }
+                    else if(askkey && !keyerr && key && !keyafter && (got > askat))
+                    {
+                        keyafter = got - askat;
+                    }
                 }
             }
             else if((len < 4) || (jpeg[0] != 0xff) || (jpeg[1] != 0xd8) ||
@@ -413,6 +435,14 @@ static BOOL captureFrames(struct UvcCamera *cm, struct UsbVideoModeReq *uvq, ULO
                     Printf("%ld key frames; about %ld bits a second\n", keyframes,
                            (bytes / ticks) * (8 * TICKS_PER_SEC) + ((bytes % ticks) * (8 * TICKS_PER_SEC)) / ticks);
                 }
+                if(askkey && (keyerr == UVERR_NOCONTROL))
+                {
+                    PutStr("No key-frame request: the camera has no way to ask for one in this mode\n");
+                }
+                else if(askkey && !keyerr && keyafter)
+                {
+                    Printf("A key frame asked for at frame %ld came %ld frames later\n", askat, keyafter);
+                }
             }
             /* frame rate by the camera clock: PTS delta over sequence delta */
             if(!uvcCommand(cm->cm_Request, NSCMD_UV_GETINFO, &uvi, sizeof(uvi)))
@@ -470,6 +500,14 @@ static BOOL captureFrames(struct UvcCamera *cm, struct UsbVideoModeReq *uvq, ULO
         else if(isstream && missed)
         {
             why = "frames missed: the stream has a hole";
+        }
+        else if(askkey && keyerr && (keyerr != UVERR_NOCONTROL))
+        {
+            why = "the key-frame request failed";
+        }
+        else if(askkey && !keyerr && (!keyafter || (keyafter > keywithin)))
+        {
+            why = "no key frame soon after asking for one";
         }
         else if(overflows)
         {

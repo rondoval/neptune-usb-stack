@@ -150,7 +150,7 @@ Each is `DEVS:USBClasses/<name>.usbclass`.
 | **Printer** | `printer` (provides `usbparallel.device`) |
 | **Networking (SANA-II)** | `cdceth`, `asixeth` (ASIX), `pegasus` (Pegasus), `dm9601eth` (Davicom DM9601), `moschipeth` (MosChip), `ethwrap`, `rndis`, `lan78xx` (Microchip LAN78xx) |
 | **MIDI & audio** | `simplemidi`, `camdusbmidi` (CAMD), `usbaudio` (USB audio → `ahi.device`) |
-| **Video** | `usbvideo` (UVC webcams: Motion-JPEG, uncompressed, H.264; provides `usbvideo.device`) |
+| **Video** | `usbvideo` (UVC webcams: Motion-JPEG, uncompressed, H.264, H.265 (untested); provides `usbvideo.device`) |
 | **Other** | `bluetooth`, `stir4200` (IrDA), `palmpda`, `arosx` (Xbox gamepad) |
 
 ## Tools
@@ -168,7 +168,8 @@ Each is `DEVS:USBClasses/<name>.usbclass`.
 - **USBVideo** works in the Shell, or from its icon as a window: pick a camera and a mode,
   record video, and open the camera's settings. With `videocodec.library` (PiStorm
   on a Raspberry Pi 4 or CM4) it shows the live picture of an MJPEG, H.264, YUY2 or NV12
-  mode.
+  mode. For an H.265 mode it needs `videocodec.library` 0.5 and `rpivid.codec` (untested: no
+  H.265 camera was at hand).
 - **`neptune.vhi`** (optional, `LIBS:VHI/`) lets VHI programs such as cAMIra use USB webcams.
 
 ## Known limitations

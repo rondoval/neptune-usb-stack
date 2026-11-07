@@ -12,8 +12,8 @@
 **	what CMD_READ returns is the camera's sample, byte for byte - for MJPEG
 **	one JPEG picture, which may lack Huffman tables (the standard ones then
 **	apply); for an uncompressed format the picture's pixels in the layout
-**	its FourCC stands for; for H.264 one picture's worth of the stream, in
-**	the byte stream form of the standard's Annex B.
+**	its FourCC stands for; for H.264 and H.265 one picture's worth of the
+**	stream, in the byte stream form of the standard's Annex B.
 **
 **	The loop an application writes:
 **	    OpenDevice("usbvideo.device", unit, ioreq, 0)
@@ -62,6 +62,7 @@
 #define NSCMD_UV_NEXTCONTROL (NSCMD_USBVIDEO_BASE + 0x08) /* the same: the camera's next control after this one */
 #define NSCMD_UV_SETCONTROL  (NSCMD_USBVIDEO_BASE + 0x09) /* the same: uvc_Value goes to the camera */
 #define NSCMD_UV_SETTINGS    (NSCMD_USBVIDEO_BASE + 0x0a) /* opens the camera's settings window; no data */
+#define NSCMD_UV_KEYFRAME    (NSCMD_USBVIDEO_BASE + 0x0b) /* asks the camera for a key frame; no data */
 /* the block is NSCMD_USBVIDEO_BASE + 0x00..0x1f */
 
 /*
@@ -188,12 +189,17 @@ struct UsbVideoMode
 #define UVFCC_YUY2       0x59555932 /* 'YUY2': packed 4:2:2, two bytes a pixel: Y0 U Y1 V */
 #define UVFCC_NV12       0x4E563132 /* 'NV12': 4:2:0, the Y plane, then U and V interleaved */
 #define UVFCC_H264       0x48323634 /* 'H264': one picture of an H.264 stream per frame */
+#define UVFCC_H265       0x48323635 /* 'H265': one picture of an H.265 stream per frame */
 #define UVFCC_VP80       0x56503830 /* 'VP80': one VP8 frame per frame */
 
 /*
-** H.264 and VP8 are streams: a frame builds on the ones before it. Keep
-** reads waiting - a frame nobody takes is a hole - and watch ivr_Sequence:
-** after a gap a decoder shows rubbish until the next key frame comes.
+** H.264, H.265 and VP8 are streams: a frame builds on the ones before it.
+** Keep reads waiting - a frame nobody takes is a hole - and watch
+** ivr_Sequence: after a gap a decoder shows rubbish until the next key frame
+** comes. NSCMD_UV_KEYFRAME asks the camera for one sooner.
+**
+** No UVC format is made for H.265: a camera names it in a frame-based
+** format, some as 'H265', some as 'HEVC'. Both are listed as H265.
 **
 ** A camera from before the H.264 format may have an H.264 encoder all the
 ** same, set up through an extension unit (<devices/usb_video.h>). Its
@@ -234,6 +240,18 @@ struct UsbVideoModeReq
     ULONG uvq_KeyInterval;    /* milliseconds from one key frame to the next; 0 = as the
                                  camera has it. Written: what the camera settled on */
 };
+
+/*
+** NSCMD_UV_KEYFRAME: asks the camera to make one of its next frames a key
+** frame, with its parameter sets, while the stream runs. It does not wait for
+** the frame: look for it in the frames that come. How it is asked depends on
+** the mode - the encoder's own control for the H.264 and VP8 formats, the
+** streaming interface's for a frame-based one such as H265, the extension
+** unit's for H.264 inside MJPEG - and on what the camera says it has.
+** UVERR_NOCONTROL: the mode has no way to ask, and every frame of MJPEG and
+** uncompressed formats stands alone anyway. UVERR_REFUSED: the camera said
+** no, as it may when the stream is not running.
+*/
 
 /*
 ** NSCMD_UV_GETSTATS: what became of the stream since the last CMD_START.

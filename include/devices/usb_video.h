@@ -135,6 +135,12 @@
 #define UVETT_SVIDEO_CONNECTOR 0x0402 /* S-video connector */
 #define UVETT_COMPONENT_CONNECTOR 0x0403 /* Component video connector */
 
+/* Controls. A control has two numbers: its selector names it in a request
+   (the high byte of wValue), and its bit in the bitmap of its unit's,
+   terminal's or format's descriptor says the device has it. The two
+   orders differ, so each has its table; an Encoding Unit's bit is its
+   selector - 1. */
+
 /* VideoControl Interface Control Selectors */
 #define UVVCCS_VIDEO_POWER_MODE_CONTROL   0x01
 #define UVVCCS_REQUEST_ERROR_CODE_CONTROL 0x02
@@ -164,6 +170,28 @@
 #define UVCTCS_WINDOW_CONTROL             0x13 /* 1.5 */
 #define UVCTCS_REGION_OF_INTEREST_CONTROL 0x14 /* 1.5 */
 
+/* Camera Terminal control bitmap, bit numbers */
+#define UVCTB_SCANNING_MODE       0
+#define UVCTB_AE_MODE             1
+#define UVCTB_AE_PRIORITY         2
+#define UVCTB_EXPOSURE_TIME_ABS   3
+#define UVCTB_EXPOSURE_TIME_REL   4
+#define UVCTB_FOCUS_ABS           5
+#define UVCTB_FOCUS_REL           6
+#define UVCTB_IRIS_ABS            7
+#define UVCTB_IRIS_REL            8
+#define UVCTB_ZOOM_ABS            9
+#define UVCTB_ZOOM_REL            10
+#define UVCTB_PANTILT_ABS         11
+#define UVCTB_PANTILT_REL         12
+#define UVCTB_ROLL_ABS            13
+#define UVCTB_ROLL_REL            14
+#define UVCTB_FOCUS_AUTO          17
+#define UVCTB_PRIVACY             18
+#define UVCTB_FOCUS_SIMPLE        19 /* 1.5 */
+#define UVCTB_WINDOW              20 /* 1.5 */
+#define UVCTB_REGION_OF_INTEREST  21 /* 1.5 */
+
 /* Processing Unit Control Selectors */
 #define UVPUCS_BACKLIGHT_COMP_CONTROL     0x01
 #define UVPUCS_BRIGHTNESS_CONTROL         0x02
@@ -184,6 +212,27 @@
 #define UVPUCS_ANALOG_VIDEO_STD_CONTROL   0x11
 #define UVPUCS_ANALOG_LOCK_STATUS_CONTROL 0x12
 #define UVPUCS_CONTRAST_AUTO_CONTROL      0x13 /* 1.5 */
+
+/* Processing Unit control bitmap, bit numbers */
+#define UVPUB_BRIGHTNESS          0
+#define UVPUB_CONTRAST            1
+#define UVPUB_HUE                 2
+#define UVPUB_SATURATION          3
+#define UVPUB_SHARPNESS           4
+#define UVPUB_GAMMA               5
+#define UVPUB_WB_TEMP             6
+#define UVPUB_WB_COMPONENT        7
+#define UVPUB_BACKLIGHT_COMP      8
+#define UVPUB_GAIN                9
+#define UVPUB_POWER_LINE_FREQ     10
+#define UVPUB_HUE_AUTO            11
+#define UVPUB_WB_TEMP_AUTO        12
+#define UVPUB_WB_COMPONENT_AUTO   13
+#define UVPUB_DIGITAL_MULT        14
+#define UVPUB_DIGITAL_MULT_LIMIT  15
+#define UVPUB_ANALOG_VIDEO_STD    16
+#define UVPUB_ANALOG_LOCK_STATUS  17
+#define UVPUB_CONTRAST_AUTO       18 /* 1.5 */
 
 /* Encoding Unit Control Selectors (1.5) */
 #define UVEUCS_SELECT_LAYER_CONTROL        0x01
@@ -218,6 +267,16 @@
 #define UVVSCS_GENERATE_KEY_FRAME_CONTROL 0x07
 #define UVVSCS_UPDATE_FRAME_SEG_CONTROL   0x08
 #define UVVSCS_SYNCH_DELAY_CONTROL        0x09
+
+/* Video Streaming input header bitmap (a format's row of bmaControls), bit
+   numbers: what probe and commit take for the format (0..3), and the
+   controls it has (4, 5) */
+#define UVIHB_KEY_FRAME_RATE      0
+#define UVIHB_P_FRAME_RATE        1
+#define UVIHB_COMP_QUALITY        2
+#define UVIHB_COMP_WINDOW_SIZE    3
+#define UVIHB_GENERATE_KEY_FRAME  4 /* UVVSCS_GENERATE_KEY_FRAME_CONTROL */
+#define UVIHB_UPDATE_FRAME_SEG    5 /* UVVSCS_UPDATE_FRAME_SEG_CONTROL */
 
 /* Stream Error Code Control values (the reason for an ERR payload) */
 #define UVSEC_NO_ERROR            0x00
@@ -365,49 +424,6 @@ struct UsbVideoIntEPDesc
     UWORD wMaxTransferSize;    /* The largest status packet */
 };
 
-/* Camera Terminal control bitmap, bit numbers */
-#define UVCTB_SCANNING_MODE       0
-#define UVCTB_AE_MODE             1
-#define UVCTB_AE_PRIORITY         2
-#define UVCTB_EXPOSURE_TIME_ABS   3
-#define UVCTB_EXPOSURE_TIME_REL   4
-#define UVCTB_FOCUS_ABS           5
-#define UVCTB_FOCUS_REL           6
-#define UVCTB_IRIS_ABS            7
-#define UVCTB_IRIS_REL            8
-#define UVCTB_ZOOM_ABS            9
-#define UVCTB_ZOOM_REL            10
-#define UVCTB_PANTILT_ABS         11
-#define UVCTB_PANTILT_REL         12
-#define UVCTB_ROLL_ABS            13
-#define UVCTB_ROLL_REL            14
-#define UVCTB_FOCUS_AUTO          17
-#define UVCTB_PRIVACY             18
-#define UVCTB_FOCUS_SIMPLE        19 /* 1.5 */
-#define UVCTB_WINDOW              20 /* 1.5 */
-#define UVCTB_REGION_OF_INTEREST  21 /* 1.5 */
-
-/* Processing Unit control bitmap, bit numbers */
-#define UVPUB_BRIGHTNESS          0
-#define UVPUB_CONTRAST            1
-#define UVPUB_HUE                 2
-#define UVPUB_SATURATION          3
-#define UVPUB_SHARPNESS           4
-#define UVPUB_GAMMA               5
-#define UVPUB_WB_TEMP             6
-#define UVPUB_WB_COMPONENT        7
-#define UVPUB_BACKLIGHT_COMP      8
-#define UVPUB_GAIN                9
-#define UVPUB_POWER_LINE_FREQ     10
-#define UVPUB_HUE_AUTO            11
-#define UVPUB_WB_TEMP_AUTO        12
-#define UVPUB_WB_COMPONENT_AUTO   13
-#define UVPUB_DIGITAL_MULT        14
-#define UVPUB_DIGITAL_MULT_LIMIT  15
-#define UVPUB_ANALOG_VIDEO_STD    16
-#define UVPUB_ANALOG_LOCK_STATUS  17
-#define UVPUB_CONTRAST_AUTO       18 /* 1.5 */
-
 /*
 ** Class specific descriptors of a Video Streaming interface
 */
@@ -427,7 +443,7 @@ struct UsbVideoInputHeaderDesc
     UBYTE bTriggerSupport;
     UBYTE bTriggerUsage;       /* 0 start still capture, 1 general button */
     UBYTE bControlSize;        /* n */
-    UBYTE bmaControls[0];      /* p rows of n bytes, one row per format */
+    UBYTE bmaControls[0];      /* p rows of n bytes, one row per format: bits UVIHB_ */
 };
 
 /* Video Streaming Output Header (subtype 0x02). UVC 1.0 ends before
@@ -756,6 +772,28 @@ struct UsbVideoStillProbeCommit
     ULONG dwMaxPayloadTransferSize;
 };
 
+/* Generate Key Frame control block (UVVSCS_GENERATE_KEY_FRAME_CONTROL): for
+   a format of temporal compression, while the stream runs */
+struct UsbVideoGenerateKeyFrame
+{
+    UBYTE bGenerateKeyFrame;   /* UVGKF_ */
+};
+
+#define UVGKF_NORMAL              0
+#define UVGKF_GENERATE            1 /* a key frame at the earliest opportunity */
+
+/* Synchronization and Long-Term Reference Frame control block of an
+   Encoding Unit (UVEUCS_SYNC_REF_FRAME_CONTROL, 1.5) */
+struct UsbVideoSyncRefFrame
+{
+    UBYTE bSyncFrameType;      /* UVSFT_ */
+    UWORD wSyncFrameInterval;  /* ms from one to the next; 0 = this one only */
+    UBYTE bGradualDecoderRefresh; /* frames of a gradual refresh; 0 for any other type */
+};
+
+#define UVSFT_RESET               0 /* the encoder chooses */
+#define UVSFT_KEY_FRAME           1 /* H.264: an IDR frame for every layer; VP8: an intra frame */
+
 
 /* Payload header: starts every payload transfer. Optional fields follow the
    flags, of which VP8 has three bytes, in this order: the presentation time
@@ -918,9 +956,12 @@ struct UvcxVideoConfig
 struct UvcxPictureType
 {
     UWORD wLayerID;
-    UWORD wPicType;            /* the next frame is: 0 an I frame, 1 a key frame (IDR),
-                                  2 one with new parameter sets */
+    UWORD wPicType;            /* UVCXPT_: what the next frame is */
 };
+
+#define UVCXPT_I_FRAME                  0
+#define UVCXPT_IDR                      1 /* a key frame */
+#define UVCXPT_NEW_SETS                 2 /* a key frame with new parameter sets */
 
 /* UVCX_BITRATE_LAYERS */
 struct UvcxBitrateLayers

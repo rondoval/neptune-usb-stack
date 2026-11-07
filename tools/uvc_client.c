@@ -26,10 +26,37 @@
 #define READ_ALIGN  64 /* of a read's buffer: a cache line, for a decoder that reads it in place */
 #define REOPEN_SECS 5  /* that the class may take to stop an orphaned stream */
 
-#define NAL_TYPE_MASK   0x1f
-#define NAL_SLICE       1 /* of a frame that is no key frame */
-#define NAL_SLICE_LAST  4 /* its data partitions, up to here */
-#define NAL_SLICE_IDR   5
+/* NAL unit types, from the first byte of a unit's header */
+#define H264_NAL_TYPE_MASK    0x1f
+#define H264_NAL_SLICE        1  /* of a frame that is no key frame; 2..4 are its data partitions */
+#define H264_NAL_SLICE_IDR    5  /* of a key frame */
+#define H265_NAL_TYPE_SHIFT   1
+#define H265_NAL_TYPE_MASK    0x3f
+#define H265_NAL_SLICE_FIRST  0  /* VCL units: a picture's slices, 0..31 */
+#define H265_NAL_SLICE_LAST   31
+#define H265_NAL_IRAP_FIRST   16 /* of a random access point: BLA, IDR, CRA, reserved */
+#define H265_NAL_IRAP_LAST    23
+
+/* A format whose frames are NAL units in Annex B: where a unit's type is,
+   the types of a picture's slices - its first slice decides - and those of
+   a key frame */
+struct NalFormat
+{
+    ULONG nf_FourCC;
+    UBYTE nf_TypeShift;
+    UBYTE nf_TypeMask;
+    UBYTE nf_SliceFirst;
+    UBYTE nf_SliceLast;
+    UBYTE nf_KeyFirst;
+    UBYTE nf_KeyLast;
+};
+
+static const struct NalFormat NalFormats[] =
+{
+    { UVFCC_H264, 0, H264_NAL_TYPE_MASK, H264_NAL_SLICE, H264_NAL_SLICE_IDR, H264_NAL_SLICE_IDR, H264_NAL_SLICE_IDR },
+    { UVFCC_H265, H265_NAL_TYPE_SHIFT, H265_NAL_TYPE_MASK, H265_NAL_SLICE_FIRST, H265_NAL_SLICE_LAST,
+      H265_NAL_IRAP_FIRST, H265_NAL_IRAP_LAST }
+};
 
 UBYTE *uvcReportTo;
 
@@ -75,7 +102,9 @@ STRPTR uvcErrorText(LONG err)
     return "error";
 }
 
-/* Execute one command synchronously (DoIO); return io_Error */
+/* Execute one command synchronously (DoIO); return io_Error. While the
+   stream runs, reads may reply to the same port meanwhile: look at the port
+   afterwards whatever came. */
 LONG uvcCommand(struct IOStdReq *ioreq, UWORD command, APTR data, ULONG len)
 {
     ioreq->io_Command = command;
@@ -131,32 +160,6 @@ static BOOL readModes(struct UvcCamera *cm)
     return TRUE;
 }
 
-/* Find the camera's H.264 extension unit (NSCMD_UV_GETTOPOLOGY); cm_H264Unit
-   stays 0 if it has none */
-static void findH264Unit(struct UvcCamera *cm)
-{
-    static const UBYTE guid[sizeof(((struct UsbVideoEntity *) 0)->uve_GUID)] = UVCX_H264_XU_GUID;
-    ULONG size = cm->cm_Info.uvi_TopologySize;
-    UBYTE *table = AllocVec(size, MEMF_ANY);
-
-    if(table && !uvcCommand(cm->cm_Request, NSCMD_UV_GETTOPOLOGY, table, size))
-    {
-        ULONG actual = cm->cm_Request->io_Actual;
-
-        for(ULONG pos = 0; (pos < actual) && !cm->cm_H264Unit; )
-        {
-            const struct UsbVideoEntity *uve = (const struct UsbVideoEntity *) (table + pos);
-
-            if((uve->uve_Type == UDST_VIDEO_CTRL_EXTENSION_UNIT) && !memcmp(uve->uve_GUID, guid, sizeof(guid)))
-            {
-                cm->cm_H264Unit = uve->uve_ID;
-            }
-            pos += uve->uve_Size;
-        }
-    }
-    FreeVec(table);
-}
-
 /* Create port and request, open the unit, read NSCMD_UV_GETINFO and the
    mode table. On failure print the reason and return FALSE. Call
    uvcCloseCamera() in either case. */
@@ -186,7 +189,6 @@ BOOL uvcOpenCamera(struct UvcCamera *cm, ULONG unit)
         uvcReport("The camera did not answer: %s", uvcErrorText(err));
         return FALSE;
     }
-    findH264Unit(cm);
     return readModes(cm);
 }
 
@@ -198,20 +200,6 @@ void uvcCloseCamera(struct UvcCamera *cm)
     uvcCloseUnit(cm);
     DeleteIORequest((struct IORequest *) cm->cm_Request);
     DeleteMsgPort(cm->cm_Port);
-}
-
-/* Ask the camera's encoder for a key frame that brings its parameter sets
-   (the stream's next picture). Return FALSE if the camera has no H.264 unit,
-   or refused: the key frame then comes when the camera's interval says so.
-   Does not wait for the picture; while the stream runs, a read may reply
-   during the command, so look at the port afterwards whatever came. */
-BOOL uvcRequestKeyFrame(struct UvcCamera *cm)
-{
-    struct UvcxPictureType pic = { 0, AROS_WORD2LE(2) };
-    UBYTE reason;
-
-    return cm->cm_H264Unit && !uvcRequest(cm->cm_Request, UVUDR_SET_CUR, cm->cm_H264Unit, UVCX_PICTURE_TYPE_CONTROL,
-                                          &pic, sizeof(pic), &reason);
 }
 
 /* Set the mode asked for in uvq (NSCMD_UV_SETMODE); uvq takes the mode the
@@ -591,10 +579,37 @@ void uvcHaltCapture(struct UvcCapture *cp)
  * Frames
  */
 
-/* Return TRUE if an H.264 access unit in byte stream form is a key frame: its
-   first slice says, and AUD, SEI and parameter sets may come before that. */
-BOOL uvcH264Key(const UBYTE *data, ULONG len)
+/* The NAL unit format of a FourCC; NULL for a format of another kind */
+static const struct NalFormat *nalFormat(ULONG fourcc)
 {
+    for(ULONG cnt = 0; cnt < sizeof(NalFormats) / sizeof(NalFormats[0]); cnt++)
+    {
+        if(NalFormats[cnt].nf_FourCC == fourcc)
+        {
+            return &NalFormats[cnt];
+        }
+    }
+    return NULL;
+}
+
+/* Return TRUE for a format whose frames are NAL units in Annex B: H.264, H.265 */
+BOOL uvcIsAnnexB(ULONG fourcc)
+{
+    return nalFormat(fourcc) != NULL;
+}
+
+/* Return TRUE if a frame of the format is a key frame. A frame of NAL units
+   is one if its first slice says so; AUD, SEI and parameter sets may come
+   before that. Any other format's frame counts as one: of the formats a
+   frame is taken from, only those of NAL units build on earlier frames. */
+BOOL uvcIsKeyFrame(ULONG fourcc, const UBYTE *data, ULONG len)
+{
+    const struct NalFormat *format = nalFormat(fourcc);
+
+    if(!format)
+    {
+        return TRUE;
+    }
     for(ULONG pos = 0; pos + 3 < len; pos++)
     {
         if(data[pos] || data[pos + 1] || (data[pos + 2] != 1))
@@ -602,15 +617,11 @@ BOOL uvcH264Key(const UBYTE *data, ULONG len)
             continue;
         }
 
-        ULONG kind = data[pos + 3] & NAL_TYPE_MASK;
+        ULONG kind = (data[pos + 3] >> format->nf_TypeShift) & format->nf_TypeMask;
 
-        if(kind == NAL_SLICE_IDR)
+        if((kind >= format->nf_SliceFirst) && (kind <= format->nf_SliceLast))
         {
-            return TRUE;
-        }
-        if((kind >= NAL_SLICE) && (kind <= NAL_SLICE_LAST))
-        {
-            return FALSE;
+            return (kind >= format->nf_KeyFirst) && (kind <= format->nf_KeyLast);
         }
         pos += 2;
     }

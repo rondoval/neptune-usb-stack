@@ -55,7 +55,6 @@ struct UvcCamera
     struct UsbVideoInfo  cm_Info;      /* NSCMD_UV_GETINFO result, read at open */
     struct UsbVideoMode *cm_Modes;     /* NSCMD_UV_GETMODES table, cm_ModesSize bytes; NULL if empty */
     ULONG                cm_ModesSize;
-    UBYTE                cm_H264Unit;  /* the H.264 extension unit's ID, 0 if it has none */
 };
 
 /* One read of a capture: its request, its buffer, and who has them. A loop
@@ -98,14 +97,13 @@ void uvcReport(const char *format, ...);
 BOOL uvcOpenCamera(struct UvcCamera *cm, ULONG unit);
 /* Free what uvcOpenCamera() allocated; safe after a partial open */
 void uvcCloseCamera(struct UvcCamera *cm);
-/* Execute one command with DoIO(); return io_Error */
+/* Execute one command with DoIO(); return io_Error. Reads that reply to the
+   same port meanwhile wait there for the caller. */
 LONG uvcCommand(struct IOStdReq *ioreq, UWORD command, APTR data, ULONG len);
 /* Send a raw class request (NSCMD_UV_REQUEST); return io_Error, *reason takes the camera's error code */
 LONG uvcRequest(struct IOStdReq *ioreq, ULONG request, ULONG entity, ULONG selector, APTR data, ULONG len, UBYTE *reason);
 /* Return a device error code as text */
 STRPTR uvcErrorText(LONG err);
-/* Ask the H.264 unit for a key frame, not waiting for it; FALSE if there is no unit or it refused */
-BOOL uvcRequestKeyFrame(struct UvcCamera *cm);
 /* Set a mode (NSCMD_UV_SETMODE), uvq taking what the camera settled on; report a failure, return io_Error */
 LONG uvcSetMode(struct UvcCamera *cm, struct UsbVideoModeReq *uvq);
 /* Close the unit, keeping its info and mode table for reading */
@@ -159,8 +157,10 @@ void uvcHaltCapture(struct UvcCapture *cp);
 
 /* Frames */
 
-/* Return TRUE if an H.264 access unit is a key frame */
-BOOL uvcH264Key(const UBYTE *data, ULONG len);
+/* Return TRUE for a format of NAL units in Annex B (H.264, H.265) */
+BOOL uvcIsAnnexB(ULONG fourcc);
+/* Return TRUE if a frame of the format is a key frame; any frame of a format not of NAL units is one */
+BOOL uvcIsKeyFrame(ULONG fourcc, const UBYTE *data, ULONG len);
 /* Return a JPEG frame's length up to and with its EOI; 0 if it holds no whole picture */
 ULONG uvcJpegLength(const UBYTE *frame, ULONG len);
 
